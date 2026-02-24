@@ -18,37 +18,12 @@ import atexit
 import functools
 from collections import deque
 
+from sensor_calibrator import Config, validate_ssid, validate_password, validate_port, validate_url
+
 matplotlib.use("TkAgg")
 
-# 配置matplotlib
 plt.rcParams["font.family"] = "DejaVu Sans"
 plt.rcParams["axes.unicode_minus"] = False
-
-
-# ==================== Constants ====================
-class Config:
-    MAX_DATA_POINTS = 2000
-    DISPLAY_DATA_POINTS = 200
-    UPDATE_INTERVAL_MS = 50
-    STATS_WINDOW_SIZE = 100
-    SERIAL_TIMEOUT = 0.1
-    SERIAL_WRITE_TIMEOUT = 1
-    MAX_QUEUE_SIZE = 2000
-    MAX_CONSECUTIVE_ERRORS = 5
-    CALIBRATION_SAMPLES = 100
-    EXPECTED_FREQUENCY = 100
-    COMMAND_DELAY = 2.0
-    RESPONSE_TIMEOUT = 5.0
-    THREAD_JOIN_TIMEOUT = 2.0
-    GRAVITY_CONSTANT = 9.8015
-    
-    SERIAL_CLEANUP_DELAY = 0.5
-    SERIAL_STABILITY_DELAY = 0.5
-    DATA_STREAM_STOP_DELAY = 1.0
-    THREAD_ERROR_DELAY = 0.1
-    PARSE_RETRY_DELAY = 0.05
-    QUICK_SLEEP = 0.01
-    BUFFER_CLEAR_DELAY = 0.5
 
 
 class StableSensorCalibrator:
@@ -969,36 +944,6 @@ class StableSensorCalibrator:
         )
         self.read_OTA_btn.pack(side="left", padx=2)
 
-    def _validate_ssid(self, ssid: str) -> tuple:
-        if not ssid:
-            return False, "SSID cannot be empty"
-        if len(ssid) > 32:
-            return False, "SSID too long (max 32 characters)"
-        return True, ""
-
-    def _validate_password(self, password: str) -> tuple:
-        if len(password) > 64:
-            return False, "Password too long (max 64 characters)"
-        return True, ""
-
-    def _validate_port(self, port: str) -> tuple:
-        if not port:
-            return False, "Port cannot be empty"
-        try:
-            port_num = int(port)
-            if port_num < 1 or port_num > 65535:
-                return False, "Port must be between 1 and 65535"
-        except ValueError:
-            return False, "Port must be a number"
-        return True, ""
-
-    def _validate_url(self, url: str) -> tuple:
-        if not url:
-            return True, ""
-        if not (url.startswith("http://") or url.startswith("https://")):
-            return False, "URL must start with http:// or https://"
-        return True, ""
-
     def set_wifi_config(self):
         """设置WiFi配置"""
         if not self.ser or not self.ser.is_open:
@@ -1008,12 +953,12 @@ class StableSensorCalibrator:
         ssid = self.ssid_var.get().strip()
         password = self.password_var.get().strip()
 
-        valid, error = self._validate_ssid(ssid)
+        valid, error = validate_ssid(ssid)
         if not valid:
             self.log_message(f"Error: {error}")
             return
 
-        valid, error = self._validate_password(password)
+        valid, error = validate_password(password)
         if not valid:
             self.log_message(f"Error: {error}")
             return
@@ -1040,7 +985,7 @@ class StableSensorCalibrator:
 
         for i, url in enumerate([URL1, URL2, URL3, URL4], 1):
             if url:
-                valid, error = self._validate_url(url)
+                valid, error = validate_url(url)
                 if not valid:
                     self.log_message(f"Error: URL{i} {error}")
                     return
@@ -1072,12 +1017,12 @@ class StableSensorCalibrator:
         if not port:
             port = "1883"
         else:
-            valid, error = self._validate_port(port)
+            valid, error = validate_port(port)
             if not valid:
                 self.log_message(f"Error: {error}")
                 return
 
-        valid, error = self._validate_password(password)
+        valid, error = validate_password(password)
         if not valid:
             self.log_message(f"Error: {error}")
             return
