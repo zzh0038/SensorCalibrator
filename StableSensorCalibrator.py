@@ -9,13 +9,14 @@ import serial.tools.list_ports
 import tkinter as tk
 from tkinter import ttk, scrolledtext, StringVar, messagebox, filedialog
 import json
-import os
 from datetime import datetime
 import hashlib
 import secrets
 import re
 import matplotlib
 import atexit
+import functools
+from collections import deque
 
 matplotlib.use("TkAgg")
 
@@ -24,34 +25,53 @@ plt.rcParams["font.family"] = "DejaVu Sans"
 plt.rcParams["axes.unicode_minus"] = False
 
 
+# ==================== Constants ====================
+class Config:
+    MAX_DATA_POINTS = 2000
+    DISPLAY_DATA_POINTS = 200
+    UPDATE_INTERVAL_MS = 50
+    STATS_WINDOW_SIZE = 100
+    SERIAL_TIMEOUT = 0.1
+    SERIAL_WRITE_TIMEOUT = 1
+    MAX_QUEUE_SIZE = 2000
+    MAX_CONSECUTIVE_ERRORS = 5
+    CALIBRATION_SAMPLES = 100
+    EXPECTED_FREQUENCY = 100
+    COMMAND_DELAY = 2.0
+    RESPONSE_TIMEOUT = 5.0
+    THREAD_JOIN_TIMEOUT = 2.0
+
+
 class StableSensorCalibrator:
     def __init__(self):
         # 初始化所有变量...
         self.ser = None
         self.is_reading = False
-        self.data_queue = queue.Queue(maxsize=2000)
-        self.update_interval = 50
+        self.data_queue = queue.Queue(maxsize=Config.MAX_QUEUE_SIZE)
+        self.update_interval = Config.UPDATE_INTERVAL_MS
 
-        # 数据存储
-        self.time_data = []
-        self.mpu_accel_data = [[], [], []]
-        self.mpu_gyro_data = [[], [], []]
-        self.adxl_accel_data = [[], [], []]
-        self.adxl_accel_data = [[], [], []]
-        self.gravity_mag_data = []
+        # 数据存储 (using deque for efficient memory management)
+        self.time_data = deque(maxlen=Config.MAX_DATA_POINTS)
+        self.mpu_accel_data = [deque(maxlen=Config.MAX_DATA_POINTS) for _ in range(3)]
+        self.mpu_gyro_data = [deque(maxlen=Config.MAX_DATA_POINTS) for _ in range(3)]
+        self.adxl_accel_data = [deque(maxlen=Config.MAX_DATA_POINTS) for _ in range(3)]
+        self.gravity_mag_data = deque(maxlen=Config.MAX_DATA_POINTS)
 
         # 时间跟踪
         self.data_start_time = None
         self.packet_count = 0
-        self.expected_frequency = 100
+        self.expected_frequency = Config.EXPECTED_FREQUENCY
 
         # 统计数据
         self.serial_freq = 0
         self.last_freq_update = time.time()
+
+        # 坐标模式状态
+        self.current_coordinate_mode = None
         self.packets_received = 0
 
         # 统计信息存储
-        self.stats_window_size = 100
+        self.stats_window_size = Config.STATS_WINDOW_SIZE
         self.real_time_stats = {
             "mpu_accel_mean": [0, 0, 0],
             "mpu_accel_std": [0, 0, 0],
@@ -80,7 +100,7 @@ class StableSensorCalibrator:
         self.is_calibrating = False
         self.current_position = 0
         self.calibration_positions = []
-        self.calibration_samples = 100
+        self.calibration_samples = Config.CALIBRATION_SAMPLES
 
         # 校准参数
         self.calibration_params = {
@@ -90,6 +110,7 @@ class StableSensorCalibrator:
             "adxl_accel_offset": [0.0, 0.0, 0.0],
             "mpu_gyro_offset": [0.0, 0.0, 0.0],
         }
+        self.calibration_file = "calibration_params.json"
 
         # 位置定义
         self.position_names = [
@@ -364,11 +385,14 @@ class StableSensorCalibrator:
         if hasattr(self, "time_data"):
             self.time_data.clear()
         if hasattr(self, "mpu_accel_data"):
-            self.mpu_accel_data = [[], [], []]
+            for d in self.mpu_accel_data:
+                d.clear()
         if hasattr(self, "mpu_gyro_data"):
-            self.mpu_gyro_data = [[], [], []]
+            for d in self.mpu_gyro_data:
+                d.clear()
         if hasattr(self, "adxl_accel_data"):
-            self.adxl_accel_data = [[], [], []]
+            for d in self.adxl_accel_data:
+                d.clear()
         if hasattr(self, "gravity_mag_data"):
             self.gravity_mag_data.clear()
 
@@ -479,6 +503,28 @@ class StableSensorCalibrator:
             font=("Arial", 9, "bold"),
         )
         freq_label.pack(side="left", padx=3)
+
+        # ===== 坐标模式按钮 =====
+        coord_row = ttk.Frame(stream_content)
+        coord_row.pack(fill="x", pady=2)
+
+        self.local_coord_btn = ttk.Button(
+            coord_row,
+            text="局部坐标模式",
+            command=self.set_local_coordinate_mode,
+            state="disabled",
+            width=12,
+        )
+        self.local_coord_btn.pack(side="left", padx=1)
+
+        self.global_coord_btn = ttk.Button(
+            coord_row,
+            text="整体坐标模式",
+            command=self.set_global_coordinate_mode,
+            state="disabled",
+            width=12,
+        )
+        self.global_coord_btn.pack(side="left", padx=2)
 
         # ===== 校准控制 =====
         calib_frame = ttk.LabelFrame(
@@ -1479,8 +1525,7 @@ class StableSensorCalibrator:
         timestamp = time.strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] {message}"
 
-        # 在主线程中更新UI
-        self.root.after(0, lambda: self._add_log_entry(log_entry))
+        self.root.after(0, functools.partial(self._add_log_entry, log_entry))
 
     def _add_log_entry(self, log_entry):
         """在主线程中添加日志条目"""
@@ -1491,9 +1536,10 @@ class StableSensorCalibrator:
         """切换串口连接"""
         if self.ser is None or not self.ser.is_open:
             self.connect_serial()
+            if self.ser is not None and self.ser.is_open:
+                self.read_props_btn.config(state="normal")
         else:
             self.disconnect_serial()
-        self.read_props_btn.config(state="normal")
 
     def connect_serial(self):
         """连接串口 - 添加更好的状态管理"""
@@ -1527,6 +1573,8 @@ class StableSensorCalibrator:
             self.connect_btn.config(text="Disconnect")
             self.data_btn.config(state="normal")
             self.data_btn2.config(state="normal")
+            self.local_coord_btn.config(state="normal")
+            self.global_coord_btn.config(state="normal")
             self.log_message(f"Connected to {port} at {baudrate} baud")
 
             # 重置数据流状态
@@ -1568,6 +1616,9 @@ class StableSensorCalibrator:
         # self.monitor_btn.config(state="disabled")
         self.calibrate_btn.config(state="disabled")
         self.send_btn.config(state="disabled")
+        self.local_coord_btn.config(state="disabled")
+        self.global_coord_btn.config(state="disabled")
+        self.current_coordinate_mode = None
         self.log_message("Disconnected from serial port")
 
     def toggle_data_stream(self):
@@ -1592,86 +1643,48 @@ class StableSensorCalibrator:
         else:
             self.stop_data_stream2()
 
-    def start_data_stream(self):
-        """开始数据流 - 修复版本"""
+    def _start_stream_common(self, cmd: str, btn, calibrate_btn_state: str):
+        """Common logic for starting data streams"""
         if self.ser and self.ser.is_open:
             try:
-                # 修复：发送正确的开始数据流命令，应该是SS:1而不是SS:0
-                self.ser.write(b"SS:0\n")  # 修正：SS:1表示开始数据流
+                self.ser.write(f"{cmd}\n".encode())
                 self.ser.flush()
 
-                # 设置状态标志
                 self.is_reading = True
-                self.data_btn.config(text="Stop Data Stream")
-                self.calibrate_btn.config(state="normal")
+                btn.config(text="Stop Data Stream")
+                self.calibrate_btn.config(state=calibrate_btn_state)
 
-                # 重置数据和时间
                 self.clear_data()
                 self.data_start_time = time.time()
                 self.packet_count = 0
-                self.packets_received = 0  # 重置包计数
+                self.packets_received = 0
 
-                self.log_message("Data stream started with command: SS:0")
+                self.log_message(f"Data stream started with command: {cmd}")
 
-                # 启动串口读取线程
                 self.serial_thread = threading.Thread(
                     target=self.read_serial_data, daemon=True
                 )
                 self.serial_thread.start()
-
-                # 确保GUI更新循环运行
                 self.schedule_update_gui()
 
             except Exception as e:
                 self.log_message(f"Error starting data stream: {str(e)}")
-                # 发生错误时重置状态
                 self.is_reading = False
-                self.data_btn.config(text="Start Data Stream")
-                self.data_btn.config(state="normal")
+                btn.config(text="Start Data Stream")
+                btn.config(state="normal")
         else:
             self.log_message("Error: Not connected to serial port or port not open!")
+
+    def start_data_stream(self):
+        """开始原始数据流"""
+        self._start_stream_common("SS:0", self.data_btn, "normal")
 
     def start_data_stream2(self):
-        """开始数据流 - 修复版本"""
-        if self.ser and self.ser.is_open:
-            try:
-                # 修复：发送正确的开始数据流命令，应该是SS:1而不是SS:0
-                self.ser.write(b"SS:1\n")  # 修正：SS:1表示开始数据流
-                self.ser.flush()
+        """开始校准数据流"""
+        self._start_stream_common("SS:1", self.data_btn2, "disabled")
 
-                # 设置状态标志
-                self.is_reading = True
-                self.data_btn2.config(text="starting Calibration Stream")
-                self.calibrate_btn.config(state="disabled")
-
-                # 重置数据和时间
-                self.clear_data()
-                self.data_start_time = time.time()
-                self.packet_count = 0
-                self.packets_received = 0  # 重置包计数
-
-                self.log_message("calibration stream started with command: SS:1")
-
-                # 启动串口读取线程
-                self.serial_thread = threading.Thread(
-                    target=self.read_serial_data, daemon=True
-                )
-                self.serial_thread.start()
-
-                # 确保GUI更新循环运行
-                self.schedule_update_gui()
-
-            except Exception as e:
-                self.log_message(f"Error starting data stream: {str(e)}")
-                # 发生错误时重置状态
-                self.is_reading = False
-                self.data_btn2.config(text="Start calibration Stream")
-                self.data_btn2.config(state="normal")
-        else:
-            self.log_message("Error: Not connected to serial port or port not open!")
-
-    def stop_data_stream(self):
-        """停止数据流 - 修复版本"""
+    def _stop_stream_common(self, btn, log_prefix: str):
+        """Common logic for stopping data streams"""
         if not hasattr(self, "is_reading") or not self.is_reading:
             return
 
@@ -1679,54 +1692,71 @@ class StableSensorCalibrator:
 
         if self.ser and self.ser.is_open:
             try:
-                # 发送停止数据流命令
                 self.ser.write(b"SS:4\n")
                 self.ser.flush()
-                self.log_message("Data stream stopped with command: SS:0")
+                self.log_message(f"{log_prefix} stopped with command: SS:4")
             except Exception as e:
                 self.log_message(f"Error stopping data stream: {str(e)}")
 
-        # 更新UI状态
         if hasattr(self, "data_btn"):
             self.data_btn.config(text="Start Data Stream")
             self.data_btn.config(state="normal")
 
+        if hasattr(btn, "config"):
+            btn.config(text="Start Data Stream")
+            btn.config(state="normal")
+
         if hasattr(self, "calibrate_btn"):
             self.calibrate_btn.config(state="disabled")
 
         if hasattr(self, "capture_btn"):
             self.capture_btn.config(state="disabled")
 
-        self.log_message("Data stream stopped")
+        self.log_message(f"{log_prefix} stopped")
+
+    def stop_data_stream(self):
+        """停止原始数据流"""
+        self._stop_stream_common(self.data_btn, "Data stream")
 
     def stop_data_stream2(self):
-        """停止数据流 - 修复版本"""
-        if not hasattr(self, "is_reading") or not self.is_reading:
+        """停止校准数据流"""
+        self._stop_stream_common(self.data_btn2, "Data calibration")
+
+    def set_local_coordinate_mode(self):
+        if not self.ser or not self.ser.is_open:
+            self.log_message("Error: Not connected to serial port!")
             return
 
-        self.is_reading = False
+        try:
+            self.ser.write(b"SS:2\n")
+            self.ser.flush()
+            self.current_coordinate_mode = 'local'
 
-        if self.ser and self.ser.is_open:
-            try:
-                # 发送停止数据流命令
-                self.ser.write(b"SS:4\n")
-                self.ser.flush()
-                self.log_message("Data calibration stopped with command: SS:4")
-            except Exception as e:
-                self.log_message(f"Error stopping data stream: {str(e)}")
+            self.local_coord_btn.config(state="disabled")
+            self.global_coord_btn.config(state="normal")
 
-        # 更新UI状态
-        if hasattr(self, "data_btn2"):
-            self.data_btn2.config(text="Stop calibration Stream")
-            self.data_btn2.config(state="normal")
+            self.log_message("Coordinate mode set to: LOCAL (SS:2)")
 
-        if hasattr(self, "calibrate_btn"):
-            self.calibrate_btn.config(state="disabled")
+        except Exception as e:
+            self.log_message(f"Error setting local coordinate mode: {str(e)}")
 
-        if hasattr(self, "capture_btn"):
-            self.capture_btn.config(state="disabled")
+    def set_global_coordinate_mode(self):
+        if not self.ser or not self.ser.is_open:
+            self.log_message("Error: Not connected to serial port!")
+            return
 
-        self.log_message("Data calibration stopped")
+        try:
+            self.ser.write(b"SS:3\n")
+            self.ser.flush()
+            self.current_coordinate_mode = 'global'
+
+            self.local_coord_btn.config(state="normal")
+            self.global_coord_btn.config(state="disabled")
+
+            self.log_message("Coordinate mode set to: GLOBAL (SS:3)")
+
+        except Exception as e:
+            self.log_message(f"Error setting global coordinate mode: {str(e)}")
 
     def read_serial_data(self):
         """读取串口数据 - 修复版本，添加更好的错误处理"""
@@ -1807,7 +1837,7 @@ class StableSensorCalibrator:
                 for part in parts[:9]:
                     try:
                         values.append(float(part.strip()))
-                    except:
+                    except (ValueError, TypeError):
                         values.append(0.0)
 
                 mpu_accel = values[0:3]
@@ -1815,7 +1845,7 @@ class StableSensorCalibrator:
                 adxl_accel = values[6:9]
 
                 return mpu_accel, mpu_gyro, adxl_accel
-        except:
+        except (AttributeError, ValueError, TypeError):
             pass
 
         return None, None, None
@@ -1823,9 +1853,12 @@ class StableSensorCalibrator:
     def clear_data(self):
         """清空所有数据"""
         self.time_data.clear()
-        self.mpu_accel_data = [[], [], []]
-        self.mpu_gyro_data = [[], [], []]
-        self.adxl_accel_data = [[], [], []]
+        for d in self.mpu_accel_data:
+            d.clear()
+        for d in self.mpu_gyro_data:
+            d.clear()
+        for d in self.adxl_accel_data:
+            d.clear()
         self.gravity_mag_data.clear()
 
     def calculate_statistics(self, data_array, start_idx=None, end_idx=None):
@@ -1838,11 +1871,8 @@ class StableSensorCalibrator:
         if end_idx is None:
             end_idx = len(data_array)
 
-        # 获取数据片段
-        if len(data_array) >= end_idx:
-            segment = data_array[start_idx:end_idx]
-        else:
-            segment = data_array[start_idx:]
+        # 获取数据片段 - convert to list for deque compatibility
+        segment = list(data_array)[start_idx:end_idx]
 
         if len(segment) == 0:
             return 0, 0
@@ -2305,32 +2335,6 @@ class StableSensorCalibrator:
                             )
                             self.gravity_mag_data.append(gravity_mag)
 
-                            # 限制数据长度，但保留足够的数据显示
-                            max_data_points = 2000  # 增加数据点数量
-
-                            if len(self.time_data) > max_data_points:
-                                # 只保留最近的数据
-                                keep_points = max_data_points
-
-                                if len(self.time_data) >= keep_points:
-                                    self.time_data = self.time_data[-keep_points:]
-                                    self.gravity_mag_data = self.gravity_mag_data[
-                                        -keep_points:
-                                    ]
-
-                                    for i in range(3):
-                                        if len(self.mpu_accel_data[i]) >= keep_points:
-                                            self.mpu_accel_data[i] = (
-                                                self.mpu_accel_data[i][-keep_points:]
-                                            )
-                                        if len(self.mpu_gyro_data[i]) >= keep_points:
-                                            self.mpu_gyro_data[i] = self.mpu_gyro_data[
-                                                i
-                                            ][-keep_points:]
-                                        if len(self.adxl_accel_data[i]) >= keep_points:
-                                            self.adxl_accel_data[i] = (
-                                                self.adxl_accel_data[i][-keep_points:]
-                                            )
                         processed_count += 1
 
                     except queue.Empty:
@@ -2488,7 +2492,7 @@ class StableSensorCalibrator:
                 # 更新MPU6050加速度计图表
                 for i in range(3):
                     if (
-                        len(self.mpu_accel_data[i]) == len(self.time_data)
+                        len(self.mpu_accel_data[i]) >= len(self.time_data) - 5
                         and len(self.mpu_accel_lines) > i
                     ):
                         self.mpu_accel_lines[i].set_data(
@@ -2498,7 +2502,7 @@ class StableSensorCalibrator:
                 # 更新ADXL355加速度计图表
                 for i in range(3):
                     if (
-                        len(self.adxl_accel_data[i]) == len(self.time_data)
+                        len(self.adxl_accel_data[i]) >= len(self.time_data) - 5
                         and len(self.adxl_accel_lines) > i
                     ):
                         self.adxl_accel_lines[i].set_data(
@@ -2508,7 +2512,7 @@ class StableSensorCalibrator:
                 # 更新MPU6050陀螺仪图表
                 for i in range(3):
                     if (
-                        len(self.mpu_gyro_data[i]) == len(self.time_data)
+                        len(self.mpu_gyro_data[i]) >= len(self.time_data) - 5
                         and len(self.mpu_gyro_lines) > i
                     ):
                         self.mpu_gyro_lines[i].set_data(
@@ -2516,14 +2520,14 @@ class StableSensorCalibrator:
                         )
 
                 # 更新重力矢量模长图表
-                if len(self.gravity_mag_data) == len(self.time_data) and hasattr(
+                if len(self.gravity_mag_data) >= len(self.time_data) - 5 and hasattr(
                     self, "gravity_line"
                 ):
                     display_points = min(len(self.time_data), 200)
                     start_idx = max(0, len(self.time_data) - display_points)
                     sample_numbers = list(range(display_points))
                     self.gravity_line.set_data(
-                        sample_numbers, self.gravity_mag_data[start_idx:]
+                        sample_numbers, list(self.gravity_mag_data)[start_idx:]
                     )
                     if hasattr(self, "ax4"):
                         self.ax4.set_xlim(0, display_points)
@@ -2595,7 +2599,7 @@ class StableSensorCalibrator:
             recent_data = []
             for i in range(3):
                 if len(self.mpu_accel_data[i]) >= start_idx + recent_points:
-                    recent_data.extend(self.mpu_accel_data[i][start_idx:])
+                    recent_data.extend(list(self.mpu_accel_data[i])[start_idx:])
 
             if recent_data:
                 y_min = min(recent_data) - 2
@@ -2616,7 +2620,7 @@ class StableSensorCalibrator:
             recent_data = []
             for i in range(3):
                 if len(self.adxl_accel_data[i]) >= start_idx + recent_points:
-                    recent_data.extend(self.adxl_accel_data[i][start_idx:])
+                    recent_data.extend(list(self.adxl_accel_data[i])[start_idx:])
 
             if recent_data:
                 y_min = min(recent_data) - 2
@@ -2636,7 +2640,7 @@ class StableSensorCalibrator:
             recent_data = []
             for i in range(3):
                 if len(self.mpu_gyro_data[i]) >= start_idx + recent_points:
-                    recent_data.extend(self.mpu_gyro_data[i][start_idx:])
+                    recent_data.extend(list(self.mpu_gyro_data[i])[start_idx:])
 
             if recent_data:
                 y_min = min(recent_data) - 1
@@ -2653,7 +2657,7 @@ class StableSensorCalibrator:
             recent_points = min(200, len(self.gravity_mag_data))
             start_idx = max(0, len(self.gravity_mag_data) - recent_points)
 
-            recent_data = self.gravity_mag_data[start_idx:]
+            recent_data = list(self.gravity_mag_data)[start_idx:]
 
             if recent_data:
                 y_min = max(0, min(recent_data) - 2)
