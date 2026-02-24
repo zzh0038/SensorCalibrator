@@ -40,6 +40,7 @@ class Config:
     COMMAND_DELAY = 2.0
     RESPONSE_TIMEOUT = 5.0
     THREAD_JOIN_TIMEOUT = 2.0
+    GRAVITY_CONSTANT = 9.8015
 
 
 class StableSensorCalibrator:
@@ -149,9 +150,8 @@ class StableSensorCalibrator:
     def setup_gui(self):
         try:
             from ctypes import windll
-
             windll.shcore.SetProcessDpiAwareness(1)
-        except:
+        except Exception:
             pass
 
         self.root = tk.Tk()
@@ -166,7 +166,7 @@ class StableSensorCalibrator:
         # 设置窗口图标
         try:
             self.root.iconbitmap(default="icon.ico")
-        except:
+        except Exception:
             pass
 
         # 配置网格权重 - 关键修改：调整列权重比例
@@ -320,7 +320,7 @@ class StableSensorCalibrator:
         if hasattr(self, "fig"):
             try:
                 plt.close(self.fig)
-            except:
+            except Exception:
                 pass
 
         self.log_message("清理完成，程序即将退出")
@@ -331,7 +331,7 @@ class StableSensorCalibrator:
         for task_id in self.after_tasks:
             try:
                 self.root.after_cancel(task_id)
-            except:
+            except Exception:
                 pass
         self.after_tasks.clear()
 
@@ -343,7 +343,7 @@ class StableSensorCalibrator:
                 try:
                     self.ser.write(b"SS:0\n")
                     self.ser.flush()
-                except:
+                except Exception:
                     pass
 
             if hasattr(self, "data_btn"):
@@ -378,7 +378,7 @@ class StableSensorCalibrator:
             try:
                 while not self.data_queue.empty():
                     self.data_queue.get_nowait()
-            except:
+            except Exception:
                 pass
 
         # 清空数据缓冲区
@@ -1179,10 +1179,10 @@ class StableSensorCalibrator:
             if URL2:
                 self.URL2_var.set(URL2)
                 self.ota_params["URL2"] = URL2
-            if URL2:
+            if URL3:
                 self.URL3_var.set(URL3)
                 self.ota_params["URL3"] = URL3
-            if URL2:
+            if URL4:
                 self.URL4_var.set(URL4)
                 self.ota_params["URL4"] = URL4
             # 启用设置按钮
@@ -1513,7 +1513,7 @@ class StableSensorCalibrator:
         try:
             for port in serial.tools.list_ports.comports():
                 ports.append(port.device)
-        except:
+        except Exception:
             pass
 
         self.port_combo["values"] = ports
@@ -2844,7 +2844,7 @@ class StableSensorCalibrator:
             return
 
         try:
-            g = 9.8015
+            g = Config.GRAVITY_CONSTANT
 
             # 计算MPU6050加速度计参数
             mpu_scales = []
@@ -2989,7 +2989,7 @@ class StableSensorCalibrator:
                             self.root.after(
                                 0, lambda r=response: self.log_message(f"Response: {r}")
                             )
-                    except:
+                    except Exception:
                         pass
 
             self.root.after(
