@@ -41,6 +41,14 @@ class Config:
     RESPONSE_TIMEOUT = 5.0
     THREAD_JOIN_TIMEOUT = 2.0
     GRAVITY_CONSTANT = 9.8015
+    
+    SERIAL_CLEANUP_DELAY = 0.5
+    SERIAL_STABILITY_DELAY = 0.5
+    DATA_STREAM_STOP_DELAY = 1.0
+    THREAD_ERROR_DELAY = 0.1
+    PARSE_RETRY_DELAY = 0.05
+    QUICK_SLEEP = 0.01
+    BUFFER_CLEAR_DELAY = 0.5
 
 
 class StableSensorCalibrator:
@@ -961,6 +969,36 @@ class StableSensorCalibrator:
         )
         self.read_OTA_btn.pack(side="left", padx=2)
 
+    def _validate_ssid(self, ssid: str) -> tuple:
+        if not ssid:
+            return False, "SSID cannot be empty"
+        if len(ssid) > 32:
+            return False, "SSID too long (max 32 characters)"
+        return True, ""
+
+    def _validate_password(self, password: str) -> tuple:
+        if len(password) > 64:
+            return False, "Password too long (max 64 characters)"
+        return True, ""
+
+    def _validate_port(self, port: str) -> tuple:
+        if not port:
+            return False, "Port cannot be empty"
+        try:
+            port_num = int(port)
+            if port_num < 1 or port_num > 65535:
+                return False, "Port must be between 1 and 65535"
+        except ValueError:
+            return False, "Port must be a number"
+        return True, ""
+
+    def _validate_url(self, url: str) -> tuple:
+        if not url:
+            return True, ""
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return False, "URL must start with http:// or https://"
+        return True, ""
+
     def set_wifi_config(self):
         """设置WiFi配置"""
         if not self.ser or not self.ser.is_open:
@@ -970,11 +1008,16 @@ class StableSensorCalibrator:
         ssid = self.ssid_var.get().strip()
         password = self.password_var.get().strip()
 
-        if not ssid:
-            self.log_message("Error: WiFi SSID cannot be empty!")
+        valid, error = self._validate_ssid(ssid)
+        if not valid:
+            self.log_message(f"Error: {error}")
             return
 
-        # 构建WiFi设置命令
+        valid, error = self._validate_password(password)
+        if not valid:
+            self.log_message(f"Error: {error}")
+            return
+
         wifi_cmd = f"SET:WF,{ssid},{password}"
 
         self.log_message(f"Setting WiFi configuration: SSID={ssid}")
@@ -985,7 +1028,7 @@ class StableSensorCalibrator:
         ).start()
 
     def set_OTA_config(self):
-        """设置MQTT配置"""
+        """设置OTA配置"""
         if not self.ser or not self.ser.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
@@ -995,7 +1038,13 @@ class StableSensorCalibrator:
         URL3 = self.URL3_var.get().strip()
         URL4 = self.URL4_var.get().strip()
 
-        # 构建MQTT设置命令
+        for i, url in enumerate([URL1, URL2, URL3, URL4], 1):
+            if url:
+                valid, error = self._validate_url(url)
+                if not valid:
+                    self.log_message(f"Error: URL{i} {error}")
+                    return
+
         OTA_cmd = f"SET:OTA,{URL1},{URL2},{URL3},{URL4}"
 
         self.log_message(f"Setting OTA configuration: OTA={URL1},{URL2},{URL3},{URL4}")
@@ -1022,8 +1071,17 @@ class StableSensorCalibrator:
 
         if not port:
             port = "1883"
+        else:
+            valid, error = self._validate_port(port)
+            if not valid:
+                self.log_message(f"Error: {error}")
+                return
 
-        # 构建MQTT设置命令
+        valid, error = self._validate_password(password)
+        if not valid:
+            self.log_message(f"Error: {error}")
+            return
+
         mqtt_cmd = f"SET:MQ,{broker},{port},{username},{password}"
 
         self.log_message(f"Setting MQTT configuration: Broker={broker}, Port={port}")
