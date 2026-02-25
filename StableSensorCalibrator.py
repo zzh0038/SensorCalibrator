@@ -1,24 +1,35 @@
-import serial
 import time
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import threading
 import queue
+import serial
 import serial.tools.list_ports
 import tkinter as tk
 from tkinter import ttk, scrolledtext, StringVar, messagebox, filedialog
 import json
 from datetime import datetime
-import hashlib
-import secrets
-import re
 import matplotlib
 import atexit
 import functools
 from collections import deque
 
-from sensor_calibrator import Config, validate_ssid, validate_password, validate_port, validate_url
+from sensor_calibrator import Config
+from serial_manager import SerialManager
+from data_pipeline import DataHub
+from calibration import compute_six_position_calibration, compute_gyro_offset
+from network_config import (
+    build_mqtt_command,
+    build_ota_command,
+    build_wifi_command,
+    extract_network_from_properties,
+)
+from activation import (
+    check_activation_status,
+    extract_mac_from_properties,
+    generate_key_from_mac,
+)
 
 matplotlib.use("TkAgg")
 
@@ -29,6 +40,16 @@ plt.rcParams["axes.unicode_minus"] = False
 class StableSensorCalibrator:
     def __init__(self):
         # 初始化所有变量...
+        # 串口管理与数据分发
+        self.serial_manager = SerialManager(logger=self._log_from_serial_manager)
+        self.data_hub = DataHub(max_queue_size=Config.MAX_QUEUE_SIZE, logger=self._log_from_serial_manager)
+        # 解析后的数据队列：GUI 与校准使用各自的队列，避免互相抢占
+        self.gui_data_queue = self.data_hub.register_subscriber("gui", maxsize=Config.MAX_QUEUE_SIZE)
+        self.calibration_data_queue = self.data_hub.register_subscriber(
+            "calibration", maxsize=Config.MAX_QUEUE_SIZE
+        )
+
+        # 兼容旧逻辑的标志
         self.ser = None
         self.is_reading = False
         self.data_queue = queue.Queue(maxsize=Config.MAX_QUEUE_SIZE)
@@ -127,8 +148,40 @@ class StableSensorCalibrator:
         # 新增：after任务ID存储
         self.after_tasks = []
 
+        # GUI 更新任务 ID（避免重复调度）
+        self.gui_update_job = None
+
+        # 注册串口数据监听，用于实时解析传感器数据
+        self.serial_manager.add_listener(self._handle_serial_line)
+
         # 设置GUI
         self.setup_gui()
+
+    def _log_from_serial_manager(self, message: str) -> None:
+        """供 SerialManager / DataHub 使用的日志回调。"""
+        # 避免在 root 尚未创建或已销毁时操作 Tk 组件
+        if not hasattr(self, "root") or not self.root:
+            return
+        self.log_message(message)
+
+    def _handle_serial_line(self, line: str) -> None:
+        """
+        串口每收到一行数据时的回调：
+        - 过滤 SS: 命令回显
+        - 解析数值型传感器数据并广播给 DataHub
+        """
+        if not line or line.startswith("SS:"):
+            return
+
+        mpu_accel, mpu_gyro, adxl_accel = self.parse_sensor_data(line)
+        if mpu_accel and mpu_gyro and adxl_accel:
+            # 记录包计数用于频率统计
+            self.packets_received += 1
+            # 广播样本给所有订阅者（GUI / 校准等）
+            try:
+                self.data_hub.publish_sample((mpu_accel, mpu_gyro, adxl_accel))
+            except Exception:
+                pass
 
     def setup_gui(self):
         try:
@@ -257,10 +310,12 @@ class StableSensorCalibrator:
 
     def schedule_update_gui(self):
         """调度GUI更新 - 安全版本"""
-        if not self.exiting:
-            self.after_tasks.append(
-                self.root.after(self.update_interval, self.update_gui)
-            )
+        if self.exiting or not hasattr(self, "root"):
+            return
+        # 避免重复调度多个 update_gui 周期任务
+        if self.gui_update_job is None:
+            self.gui_update_job = self.root.after(self.update_interval, self.update_gui)
+            self.after_tasks.append(self.gui_update_job)
 
     def on_closing(self):
         """窗口关闭事件处理"""
@@ -356,7 +411,7 @@ class StableSensorCalibrator:
             ):
                 time.sleep(0.1)
 
-        # 清除数据队列
+        # 清除旧数据队列（兼容保留）
         if hasattr(self, "data_queue"):
             try:
                 while not self.data_queue.empty():
@@ -1537,9 +1592,9 @@ class StableSensorCalibrator:
 
     def toggle_connection(self):
         """切换串口连接"""
-        if self.ser is None or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.connect_serial()
-            if self.ser is not None and self.ser.is_open:
+            if self.serial_manager.is_open:
                 self.read_props_btn.config(state="normal")
         else:
             self.disconnect_serial()
@@ -1555,23 +1610,14 @@ class StableSensorCalibrator:
 
         try:
             # 确保之前的状态被清理
-            if hasattr(self, "ser") and self.ser and self.ser.is_open:
+            if self.serial_manager.is_open:
                 self.disconnect_serial()
                 time.sleep(0.5)  # 等待断开完成
 
-            self.ser = serial.Serial(
-                port=port,
-                baudrate=baudrate,
-                timeout=0.1,
-                write_timeout=1,
-                rtscts=False,  # 禁用硬件流控制
-                dsrdtr=False,  # 禁用硬件流控制
-            )
-
-            # 清空缓冲区
-            time.sleep(0.5)  # 等待串口稳定
-            self.ser.reset_input_buffer()
-            self.ser.reset_output_buffer()
+            # 通过 SerialManager 打开串口
+            self.serial_manager.open(port=port, baudrate=baudrate, timeout=0.1, write_timeout=1)
+            # 兼容旧逻辑：保留 self.ser 引用
+            self.ser = self.serial_manager._ser  # type: ignore[attr-defined]
 
             self.connect_btn.config(text="Disconnect")
             self.data_btn.config(state="normal")
@@ -1605,14 +1651,14 @@ class StableSensorCalibrator:
         if self.is_reading:
             self.stop_data_stream()
 
-        if self.ser and self.ser.is_open:
-            self.ser.close()
+        if self.serial_manager.is_open:
+            self.serial_manager.close()
+        self.ser = None
 
         # 新增：禁用按钮
         self.read_props_btn.config(state="disabled")
         self.resend_btn.config(state="disabled")
 
-        self.ser = None
         self.connect_btn.config(text="Connect")
         self.data_btn.config(text="Start Data Stream")
         self.data_btn.config(state="disabled")
@@ -1626,7 +1672,7 @@ class StableSensorCalibrator:
 
     def toggle_data_stream(self):
         """切换数据流状态 - 修复版本"""
-        if not self.ser or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
 
@@ -1637,7 +1683,7 @@ class StableSensorCalibrator:
 
     def toggle_data_stream2(self):
         """切换数据流状态 - 修复版本"""
-        if not self.ser or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
 
@@ -1648,10 +1694,9 @@ class StableSensorCalibrator:
 
     def _start_stream_common(self, cmd: str, btn, calibrate_btn_state: str):
         """Common logic for starting data streams"""
-        if self.ser and self.ser.is_open:
+        if self.serial_manager.is_open:
             try:
-                self.ser.write(f"{cmd}\n".encode())
-                self.ser.flush()
+                self.serial_manager.send_line(cmd)
 
                 self.is_reading = True
                 btn.config(text="Stop Data Stream")
@@ -1693,10 +1738,9 @@ class StableSensorCalibrator:
 
         self.is_reading = False
 
-        if self.ser and self.ser.is_open:
+        if self.serial_manager.is_open:
             try:
-                self.ser.write(b"SS:4\n")
-                self.ser.flush()
+                self.serial_manager.send_line("SS:4")
                 self.log_message(f"{log_prefix} stopped with command: SS:4")
             except Exception as e:
                 self.log_message(f"Error stopping data stream: {str(e)}")
@@ -1726,13 +1770,12 @@ class StableSensorCalibrator:
         self._stop_stream_common(self.data_btn2, "Data calibration")
 
     def set_local_coordinate_mode(self):
-        if not self.ser or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
 
         try:
-            self.ser.write(b"SS:2\n")
-            self.ser.flush()
+            self.serial_manager.send_line("SS:2")
             self.current_coordinate_mode = 'local'
 
             self.local_coord_btn.config(state="disabled")
@@ -1744,13 +1787,12 @@ class StableSensorCalibrator:
             self.log_message(f"Error setting local coordinate mode: {str(e)}")
 
     def set_global_coordinate_mode(self):
-        if not self.ser or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
 
         try:
-            self.ser.write(b"SS:3\n")
-            self.ser.flush()
+            self.serial_manager.send_line("SS:3")
             self.current_coordinate_mode = 'global'
 
             self.local_coord_btn.config(state="normal")
@@ -1761,75 +1803,7 @@ class StableSensorCalibrator:
         except Exception as e:
             self.log_message(f"Error setting global coordinate mode: {str(e)}")
 
-    def read_serial_data(self):
-        """读取串口数据 - 修复版本，添加更好的错误处理"""
-        buffer = ""
-        consecutive_errors = 0
-        max_consecutive_errors = 5
-
-        while self.is_reading and self.ser and self.ser.is_open:
-            try:
-                if self.ser.in_waiting > 0:
-                    # 读取可用数据
-                    data = self.ser.read(self.ser.in_waiting).decode(
-                        "ascii", errors="ignore"
-                    )
-                    buffer += data
-
-                    # 处理完整行
-                    lines = buffer.split("\n")
-                    buffer = lines[-1]  # 保留不完整的行
-
-                    for line in lines[:-1]:
-                        line = line.strip()
-                        if line and not line.startswith("SS:"):  # 过滤命令回显
-                            # 非阻塞方式放入队列
-                            try:
-                                if not self.data_queue.full():
-                                    self.data_queue.put_nowait(line)
-                                    self.packets_received += 1
-                                    consecutive_errors = 0  # 重置错误计数
-                                else:
-                                    # 队列满时丢弃最旧的数据
-                                    try:
-                                        self.data_queue.get_nowait()
-                                        self.data_queue.put_nowait(line)
-                                    except queue.Empty:
-                                        pass
-                            except queue.Full:
-                                # 队列满，跳过此数据点
-                                pass
-
-                # 短暂休眠，避免过度占用CPU
-                time.sleep(0.001)
-
-                # 检查连接状态
-                if not self.ser or not self.ser.is_open:
-                    break
-
-            except serial.SerialException as e:
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    self.log_message(
-                        f"Multiple serial errors, stopping data stream: {str(e)}"
-                    )
-                    break
-                time.sleep(0.1)  # 错误时等待更长时间
-            except Exception as e:
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    self.log_message(f"Unexpected error in serial reading: {str(e)}")
-                    break
-                time.sleep(0.05)
-
-        # 如果因为错误退出，确保状态正确
-        if self.is_reading:
-            self.log_message("Serial reading thread exited unexpectedly")
-            self.is_reading = False
-            if hasattr(self, "data_btn"):
-                self.root.after(
-                    0, lambda: self.data_btn.config(text="Start Data Stream")
-                )
+    # read_serial_data 由 SerialManager 接管，不再需要单独线程读取
 
     def parse_sensor_data(self, data_string):
         """解析传感器数据"""
@@ -2297,62 +2271,56 @@ class StableSensorCalibrator:
                 self.last_freq_update = current_time
                 self.freq_var.set(f"{self.serial_freq} Hz")
 
-            # 处理数据队列
+            # 处理来自 DataHub 的 GUI 数据队列
             processed_count = 0
-            if hasattr(self, "data_queue"):
-                while (
-                    not self.data_queue.empty() and processed_count < 100
-                ):  # 增加处理数量
-                    try:
-                        data_string = self.data_queue.get_nowait()
+            while (
+                self.gui_data_queue is not None
+                and not self.gui_data_queue.empty()
+                and processed_count < 100
+            ):
+                try:
+                    mpu_accel, mpu_gyro, adxl_accel = self.gui_data_queue.get_nowait()
 
-                        mpu_accel, mpu_gyro, adxl_accel = self.parse_sensor_data(
-                            data_string
-                        )
+                    # 使用包计数计算时间，确保时间连续
+                    if self.data_start_time is None:
+                        self.data_start_time = time.time()
 
-                        if mpu_accel and mpu_gyro and adxl_accel:
-                            # 使用包计数计算时间，确保时间连续
-                            if self.data_start_time is None:
-                                self.data_start_time = time.time()
+                    current_relative_time = self.packet_count / self.expected_frequency
+                    self.packet_count += 1
 
-                            # 使用包计数计算时间
-                            current_relative_time = (
-                                self.packet_count / self.expected_frequency
-                            )
-                            self.packet_count += 1
+                    # 更新时间数据
+                    self.time_data.append(current_relative_time)
 
-                            # 更新时间数据
-                            self.time_data.append(current_relative_time)
+                    # 更新传感器数据
+                    for i in range(3):
+                        self.mpu_accel_data[i].append(mpu_accel[i])
+                        self.mpu_gyro_data[i].append(mpu_gyro[i])
+                        self.adxl_accel_data[i].append(adxl_accel[i])
 
-                            # 更新传感器数据
-                            for i in range(3):
-                                self.mpu_accel_data[i].append(mpu_accel[i])
-                                self.mpu_gyro_data[i].append(mpu_gyro[i])
-                                self.adxl_accel_data[i].append(adxl_accel[i])
+                    # 计算重力矢量模长
+                    gravity_mag = np.sqrt(
+                        mpu_accel[0] ** 2
+                        + mpu_accel[1] ** 2
+                        + mpu_accel[2] ** 2
+                    )
+                    self.gravity_mag_data.append(gravity_mag)
 
-                            # 计算重力矢量模长
-                            gravity_mag = np.sqrt(
-                                mpu_accel[0] ** 2
-                                + mpu_accel[1] ** 2
-                                + mpu_accel[2] ** 2
-                            )
-                            self.gravity_mag_data.append(gravity_mag)
+                    processed_count += 1
 
-                        processed_count += 1
+                except queue.Empty:
+                    break
+                except Exception:
+                    continue
 
-                    except queue.Empty:
-                        break
-                    except Exception as e:
-                        continue
-                # 更新统计信息
-                self.safe_update_statistics()
+            # 更新统计信息与图表
+            self.safe_update_statistics()
 
-                if not self.exiting:
-                    self.update_charts()
+            if not self.exiting:
+                self.update_charts()
 
-                # 调度下一次更新
-                if not self.exiting and hasattr(self, "root"):
-                    self.schedule_update_gui()
+            # 调度下一次更新
+            if not self.exiting and hasattr(self, "root"):
+                self.schedule_update_gui()
         except Exception as e:
             # 如果发生异常，记录日志但不要中断
             if not self.exiting:
@@ -2719,17 +2687,15 @@ class StableSensorCalibrator:
             # 采集数据
             while samples_collected < self.calibration_samples and self.is_reading:
                 try:
-                    # 从队列获取数据
-                    data_string = self.data_queue.get(timeout=0.1)
-                    mpu_accel, mpu_gyro, adxl_accel = self.parse_sensor_data(
-                        data_string
+                    # 从校准数据队列获取解析后的样本
+                    mpu_accel, mpu_gyro, adxl_accel = self.calibration_data_queue.get(
+                        timeout=0.1
                     )
 
-                    if mpu_accel and mpu_gyro and adxl_accel:
-                        mpu_accel_samples.append(mpu_accel)
-                        mpu_gyro_samples.append(mpu_gyro)
-                        adxl_accel_samples.append(adxl_accel)
-                        samples_collected += 1
+                    mpu_accel_samples.append(mpu_accel)
+                    mpu_gyro_samples.append(mpu_gyro)
+                    adxl_accel_samples.append(adxl_accel)
+                    samples_collected += 1
 
                     # 超时保护
                     if time.time() - start_time > 10:
@@ -2849,61 +2815,17 @@ class StableSensorCalibrator:
         try:
             g = Config.GRAVITY_CONSTANT
 
-            # 计算MPU6050加速度计参数
-            mpu_scales = []
-            mpu_offsets = []
+            # 组装 6 个姿态下的三轴加速度样本
+            mpu_samples = [pos["mpu_accel"] for pos in self.calibration_positions]
+            adxl_samples = [pos["adxl_accel"] for pos in self.calibration_positions]
 
-            for axis in range(3):
-                pos_idx = axis * 2
-                neg_idx = axis * 2 + 1
-
-                pos_val = self.calibration_positions[pos_idx]["mpu_accel"][axis]
-                neg_val = self.calibration_positions[neg_idx]["mpu_accel"][axis]
-
-                offset = (pos_val + neg_val) / 2.0
-                delta = pos_val - neg_val
-
-                if abs(delta) > 1e-6:
-                    scale = delta / (2.0 * g)
-                else:
-                    scale = 1.0
-
-                # 存储为1/scale用于校正
-                scale_factor = 1.0 / scale if abs(scale) > 1e-6 else 1.0
-
-                mpu_offsets.append(offset)
-                mpu_scales.append(scale_factor)
-
-            # 计算ADXL355加速度计参数
-            adxl_scales = []
-            adxl_offsets = []
-
-            for axis in range(3):
-                pos_idx = axis * 2
-                neg_idx = axis * 2 + 1
-
-                pos_val = self.calibration_positions[pos_idx]["adxl_accel"][axis]
-                neg_val = self.calibration_positions[neg_idx]["adxl_accel"][axis]
-
-                offset = (pos_val + neg_val) / 2.0
-                delta = pos_val - neg_val
-
-                if abs(delta) > 1e-6:
-                    scale = delta / (2.0 * g)
-                else:
-                    scale = 1.0
-
-                scale_factor = 1.0 / scale if abs(scale) > 1e-6 else 1.0
-
-                adxl_offsets.append(offset)
-                adxl_scales.append(scale_factor)
+            # 使用独立模块中的算法计算 scale/offset
+            mpu_scales, mpu_offsets = compute_six_position_calibration(mpu_samples, g)
+            adxl_scales, adxl_offsets = compute_six_position_calibration(adxl_samples, g)
 
             # 计算陀螺仪偏移
-            gyro_samples = []
-            for pos in self.calibration_positions:
-                gyro_samples.append(pos["mpu_gyro"])
-
-            gyro_avg = np.mean(gyro_samples, axis=0)
+            gyro_samples = [pos["mpu_gyro"] for pos in self.calibration_positions]
+            gyro_avg_list = compute_gyro_offset(gyro_samples)
 
             # 更新参数
             self.calibration_params = {
@@ -2911,7 +2833,7 @@ class StableSensorCalibrator:
                 "mpu_accel_offset": mpu_offsets,
                 "adxl_accel_scale": adxl_scales,
                 "adxl_accel_offset": adxl_offsets,
-                "mpu_gyro_offset": gyro_avg.tolist(),
+                "mpu_gyro_offset": gyro_avg_list,
             }
 
             # 生成校准命令
