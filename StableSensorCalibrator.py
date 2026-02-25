@@ -1167,59 +1167,33 @@ class StableSensorCalibrator:
         """从传感器属性中提取网络配置"""
         if not self.sensor_properties:
             return
-        # 提取WiFi配置
-        if "sys" in self.sensor_properties:
-            sys_info = self.sensor_properties["sys"]
+        configs = extract_network_from_properties(self.sensor_properties)
 
-            # WiFi配置
-            ssid = sys_info.get("SSID", "")
-            password = sys_info.get("PA", "")
+        wifi_cfg = configs["wifi"]
+        mqtt_cfg = configs["mqtt"]
+        ota_cfg = configs["ota"]
 
-            if ssid:
-                self.ssid_var.set(ssid)
-                self.wifi_params["ssid"] = ssid
-            if password:
-                self.password_var.set(password)
-                self.wifi_params["password"] = password
+        # WiFi
+        self.ssid_var.set(wifi_cfg["ssid"])
+        self.password_var.set(wifi_cfg["password"])
+        self.wifi_params.update(wifi_cfg)
 
-            # MQTT配置
-            broker = sys_info.get("MBR", "")
-            port = sys_info.get("MPT", "1883")
-            username = sys_info.get("MUS", "")
-            password = sys_info.get("MPW", "")
+        # MQTT
+        self.mqtt_broker_var.set(mqtt_cfg["broker"])
+        self.mqtt_user_var.set(mqtt_cfg["username"])
+        self.mqtt_password_var.set(mqtt_cfg["password"])
+        self.mqtt_port_var.set(mqtt_cfg["port"])
+        self.mqtt_params.update(mqtt_cfg)
 
-            URL1 = sys_info.get("URL1", "")
-            URL2 = sys_info.get("URL2", "")
-            URL3 = sys_info.get("URL3", "")
-            URL4 = sys_info.get("URL4", "")
+        # OTA
+        self.URL1_var.set(ota_cfg["URL1"])
+        self.URL2_var.set(ota_cfg["URL2"])
+        self.URL3_var.set(ota_cfg["URL3"])
+        self.URL4_var.set(ota_cfg["URL4"])
+        self.ota_params.update(ota_cfg)
 
-            if broker:
-                self.mqtt_broker_var.set(broker)
-                self.mqtt_params["broker"] = broker
-            if username:
-                self.mqtt_user_var.set(username)
-                self.mqtt_params["username"] = username
-            if password:
-                self.mqtt_password_var.set(password)
-                self.mqtt_params["password"] = password
-            if port:
-                self.mqtt_port_var.set(str(port))
-                self.mqtt_params["port"] = str(port)
-
-            if URL1:
-                self.URL1_var.set(URL1)
-                self.ota_params["URL1"] = URL1
-            if URL2:
-                self.URL2_var.set(URL2)
-                self.ota_params["URL2"] = URL2
-            if URL3:
-                self.URL3_var.set(URL3)
-                self.ota_params["URL3"] = URL3
-            if URL4:
-                self.URL4_var.set(URL4)
-                self.ota_params["URL4"] = URL4
-            # 启用设置按钮
-            self.root.after(0, self.enable_config_buttons)
+        # 启用设置按钮
+        self.root.after(0, self.enable_config_buttons)
 
     def enable_config_buttons(self):
         """启用配置按钮"""
