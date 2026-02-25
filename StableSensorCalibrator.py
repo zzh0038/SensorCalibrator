@@ -1001,26 +1001,19 @@ class StableSensorCalibrator:
 
     def set_wifi_config(self):
         """设置WiFi配置"""
-        if not self.ser or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
 
-        ssid = self.ssid_var.get().strip()
-        password = self.password_var.get().strip()
+        ssid = self.ssid_var.get()
+        password = self.password_var.get()
 
-        valid, error = validate_ssid(ssid)
-        if not valid:
+        ok, error, wifi_cmd = build_wifi_command(ssid, password)
+        if not ok:
             self.log_message(f"Error: {error}")
             return
 
-        valid, error = validate_password(password)
-        if not valid:
-            self.log_message(f"Error: {error}")
-            return
-
-        wifi_cmd = f"SET:WF,{ssid},{password}"
-
-        self.log_message(f"Setting WiFi configuration: SSID={ssid}")
+        self.log_message(f"Setting WiFi configuration: SSID={ssid.strip()}")
 
         # 在新线程中发送命令
         threading.Thread(
@@ -1029,7 +1022,7 @@ class StableSensorCalibrator:
 
     def set_OTA_config(self):
         """设置OTA配置"""
-        if not self.ser or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
 
@@ -1038,14 +1031,10 @@ class StableSensorCalibrator:
         URL3 = self.URL3_var.get().strip()
         URL4 = self.URL4_var.get().strip()
 
-        for i, url in enumerate([URL1, URL2, URL3, URL4], 1):
-            if url:
-                valid, error = validate_url(url)
-                if not valid:
-                    self.log_message(f"Error: URL{i} {error}")
-                    return
-
-        OTA_cmd = f"SET:OTA,{URL1},{URL2},{URL3},{URL4}"
+        ok, error, OTA_cmd = build_ota_command(URL1, URL2, URL3, URL4)
+        if not ok:
+            self.log_message(f"Error: {error}")
+            return
 
         self.log_message(f"Setting OTA configuration: OTA={URL1},{URL2},{URL3},{URL4}")
 
@@ -1056,7 +1045,7 @@ class StableSensorCalibrator:
 
     def set_mqtt_config(self):
         """设置MQTT配置"""
-        if not self.ser or not self.ser.is_open:
+        if not self.serial_manager.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
 
@@ -1065,24 +1054,10 @@ class StableSensorCalibrator:
         password = self.mqtt_password_var.get().strip()
         port = self.mqtt_port_var.get().strip()
 
-        if not broker:
-            self.log_message("Error: MQTT broker address cannot be empty!")
-            return
-
-        if not port:
-            port = "1883"
-        else:
-            valid, error = validate_port(port)
-            if not valid:
-                self.log_message(f"Error: {error}")
-                return
-
-        valid, error = validate_password(password)
-        if not valid:
+        ok, error, mqtt_cmd = build_mqtt_command(broker, port, username, password)
+        if not ok:
             self.log_message(f"Error: {error}")
             return
-
-        mqtt_cmd = f"SET:MQ,{broker},{port},{username},{password}"
 
         self.log_message(f"Setting MQTT configuration: Broker={broker}, Port={port}")
 
@@ -2898,8 +2873,8 @@ class StableSensorCalibrator:
             for i, cmd in enumerate(commands):
                 if cmd.strip():  # 跳过空行
                     # 发送命令
-                    self.ser.write(f"{cmd}\n".encode())
-                    self.ser.flush()
+                    if self.serial_manager.is_open:
+                        self.serial_manager.send_line(cmd)
 
                     # 在主线程中更新日志
                     self.root.after(0, lambda c=cmd: self.log_message(f"Sent: {c}"))
@@ -2909,11 +2884,8 @@ class StableSensorCalibrator:
 
                     # 尝试读取响应（可选）
                     try:
-                        response = self.ser.readline().decode().strip()
-                        if response:
-                            self.root.after(
-                                0, lambda r=response: self.log_message(f"Response: {r}")
-                            )
+                        # 响应读取改为由 SerialManager 的读取线程统一处理，这里不强制读取
+                        pass
                     except Exception:
                         pass
 
