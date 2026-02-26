@@ -628,6 +628,34 @@ class StableSensorCalibrator:
         )
         self.resend_btn.pack(side="left", padx=2, expand=True, fill="x")
 
+        # ===== 坐标模式控制 =====
+        coord_frame = ttk.LabelFrame(parent, text="Coordinate Mode", style="Compact.TLabelframe")
+        coord_frame.pack(fill="x", pady=(0, 5))
+
+        coord_content = ttk.Frame(coord_frame)
+        coord_content.pack(fill="x", padx=3, pady=2)
+
+        coord_row = ttk.Frame(coord_content)
+        coord_row.pack(fill="x", pady=1)
+
+        self.local_coord_btn = ttk.Button(
+            coord_row,
+            text="Local Coord (SS:2)",
+            command=self.set_local_coordinate_mode,
+            state="disabled",
+            width=18,
+        )
+        self.local_coord_btn.pack(side="left", padx=2, expand=True, fill="x")
+
+        self.global_coord_btn = ttk.Button(
+            coord_row,
+            text="Global Coord (SS:3)",
+            command=self.set_global_coordinate_mode,
+            state="disabled",
+            width=18,
+        )
+        self.global_coord_btn.pack(side="left", padx=2, expand=True, fill="x")
+
         # ===== 传感器激活 =====
         activation_frame = ttk.LabelFrame(
             parent, text="Activation", style="Compact.TLabelframe"  # 缩短标题
@@ -1084,6 +1112,35 @@ class StableSensorCalibrator:
         self.log_message("Reading MQTT configuration from device...")
         self.read_sensor_properties()
 
+    def set_coordinate_mode(self, mode: int, mode_name: str) -> None:
+        """设置坐标模式
+
+        Args:
+            mode: 模式编号 (2=局部坐标, 3=整体坐标)
+            mode_name: 模式名称（用于日志显示）
+        """
+        if not self.ser or not self.ser.is_open:
+            self.log_message("Error: Not connected to serial port!")
+            return
+
+        try:
+            command = f"SS:{mode}\n".encode()
+            self.ser.write(command)
+            self.ser.flush()
+            self.log_message(f"Sent: SS:{mode} ({mode_name})")
+        except serial.SerialException as e:
+            self.log_message(f"Serial error sending coordinate command: {str(e)}")
+        except Exception as e:
+            self.log_message(f"Unexpected error: {str(e)}")
+
+    def set_local_coordinate_mode(self) -> None:
+        """设置局部坐标模式 - 发送 SS:2 指令"""
+        self.set_coordinate_mode(2, "Local Coordinate Mode")
+
+    def set_global_coordinate_mode(self) -> None:
+        """设置整体坐标模式 - 发送 SS:3 指令"""
+        self.set_coordinate_mode(3, "Global Coordinate Mode")
+
     def extract_network_config(self):
         """从传感器属性中提取网络配置"""
         if not self.sensor_properties:
@@ -1156,6 +1213,10 @@ class StableSensorCalibrator:
             self.set_OTA_btn.config(state="normal")
         if hasattr(self, "read_OTA_btn"):
             self.read_OTA_btn.config(state="normal")
+        if hasattr(self, "local_coord_btn"):
+            self.local_coord_btn.config(state="normal")
+        if hasattr(self, "global_coord_btn"):
+            self.global_coord_btn.config(state="normal")
 
     def display_network_summary(self):
         """显示网络配置摘要"""
@@ -1560,6 +1621,10 @@ class StableSensorCalibrator:
         # 新增：禁用按钮
         self.read_props_btn.config(state="disabled")
         self.resend_btn.config(state="disabled")
+        if hasattr(self, "local_coord_btn"):
+            self.local_coord_btn.config(state="disabled")
+        if hasattr(self, "global_coord_btn"):
+            self.global_coord_btn.config(state="disabled")
 
         self.ser = None
         self.connect_btn.config(text="Connect")

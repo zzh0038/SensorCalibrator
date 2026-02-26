@@ -23,6 +23,9 @@ def compute_six_position_calibration(
     if len(axis_samples) != 6:
         raise ValueError("compute_six_position_calibration requires exactly 6 positions")
 
+    if gravity <= 0.0:
+        raise ValueError("gravity must be a positive, non-zero value")
+
     arr = np.asarray(axis_samples, dtype=float)
     if arr.shape != (6, 3):
         raise ValueError("axis_samples must have shape (6, 3)")
@@ -62,6 +65,11 @@ def compute_gyro_offset(samples: Iterable[Sequence[float]]) -> List[float]:
     arr = np.asarray(list(samples), dtype=float)
     if arr.size == 0:
         return [0.0, 0.0, 0.0]
+
+    # 要求为二维数组，形状为 (n, 3)
+    if arr.ndim != 2 or arr.shape[1] != 3:
+        raise ValueError("samples must be an iterable of 3-element sequences, with shape (n, 3)")
+
     mean = arr.mean(axis=0)
     return [float(mean[0]), float(mean[1]), float(mean[2])]
 
