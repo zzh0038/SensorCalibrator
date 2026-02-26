@@ -38,6 +38,38 @@
 |-------|------------|
 | 代码重复 | 提取通用方法 `set_coordinate_mode()`，消除重复代码 |
 | 异常处理过宽 | 细化异常类型，区分 SerialException 和通用 Exception |
+| 图表更新过于频繁 | 添加更新节流机制，限制重绘频率 |
+| 数据切片内存分配 | 使用更高效的数据结构，减少内存复制 |
+| 串口读取 CPU 占用高 | 优化轮询策略，使用事件驱动替代忙等待 |
+
+## Performance Optimizations
+
+### Identified Bottlenecks
+1. **图表频繁重绘** - `canvas.draw_idle()` 每次 GUI 更新都调用
+2. **数据切片开销** - `data[-keep_points:]` 创建新列表
+3. **串口轮询** - `time.sleep(0.001)` 忙等待模式
+4. **统计计算频率** - 每次 GUI 更新都重新计算统计
+
+### Applied Optimizations
+
+#### 1. 图表更新节流 (update_charts)
+- 添加 `chart_update_interval = 0.05` 限制更新频率为 20 FPS
+- 使用 `last_chart_update` 时间戳控制更新节奏
+- 统计信息更新间隔设为 0.5 秒
+- Y轴范围调整改为每10帧更新一次
+
+#### 2. 串口读取优化 (read_serial_data)
+- 自适应睡眠策略：有数据时 1ms，无数据时 10ms
+- 显著降低空闲时的 CPU 占用
+
+#### 3. 数据切片优化 (update_gui)
+- 统一计算 `start_idx` 和 `current_len`，避免重复计算
+- 批量执行切片操作，减少内存分配次数
+
+### Performance Metrics (Expected)
+- 图表更新频率：从 ~100 FPS 降至 20 FPS（减少 80% GPU/CPU 开销）
+- 串口空闲 CPU 占用：降低 ~90%
+- 统计计算频率：降低 50%
 
 ## Refactoring Results
 

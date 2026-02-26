@@ -122,6 +122,12 @@ class StableSensorCalibrator:
         # 新增：after任务ID存储
         self.after_tasks = []
 
+        # 新增：性能优化相关变量
+        self.last_chart_update = 0
+        self.chart_update_interval = 0.05  # 图表更新间隔（秒），限制为20 FPS
+        self.last_stats_update = 0
+        self.stats_update_interval = 0.5   # 统计信息更新间隔（秒）
+
         # 设置GUI
         self.setup_gui()
 
@@ -1833,7 +1839,11 @@ class StableSensorCalibrator:
                                 pass
 
                 # 短暂休眠，避免过度占用CPU
-                time.sleep(0.001)
+                # 优化：使用自适应睡眠策略，有数据时快速轮询，无数据时降低频率
+                if self.ser.in_waiting > 0:
+                    time.sleep(0.001)  # 有数据时快速处理
+                else:
+                    time.sleep(0.01)   # 无数据时降低轮询频率，减少CPU占用
 
                 # 检查连接状态
                 if not self.ser or not self.ser.is_open:
@@ -2376,31 +2386,26 @@ class StableSensorCalibrator:
                             self.gravity_mag_data.append(gravity_mag)
 
                             # 限制数据长度，但保留足够的数据显示
-                            max_data_points = 2000  # 增加数据点数量
+                            max_data_points = 2000  # 数据点数量
 
-                            if len(self.time_data) > max_data_points:
+                            # 性能优化：批量切片，减少内存分配次数
+                            current_len = len(self.time_data)
+                            if current_len > max_data_points:
                                 # 只保留最近的数据
                                 keep_points = max_data_points
+                                start_idx = current_len - keep_points
 
-                                if len(self.time_data) >= keep_points:
-                                    self.time_data = self.time_data[-keep_points:]
-                                    self.gravity_mag_data = self.gravity_mag_data[
-                                        -keep_points:
-                                    ]
+                                # 批量切片操作
+                                self.time_data = self.time_data[start_idx:]
+                                self.gravity_mag_data = self.gravity_mag_data[start_idx:]
 
-                                    for i in range(3):
-                                        if len(self.mpu_accel_data[i]) >= keep_points:
-                                            self.mpu_accel_data[i] = (
-                                                self.mpu_accel_data[i][-keep_points:]
-                                            )
-                                        if len(self.mpu_gyro_data[i]) >= keep_points:
-                                            self.mpu_gyro_data[i] = self.mpu_gyro_data[
-                                                i
-                                            ][-keep_points:]
-                                        if len(self.adxl_accel_data[i]) >= keep_points:
-                                            self.adxl_accel_data[i] = (
-                                                self.adxl_accel_data[i][-keep_points:]
-                                            )
+                                for i in range(3):
+                                    if len(self.mpu_accel_data[i]) > keep_points:
+                                        self.mpu_accel_data[i] = self.mpu_accel_data[i][start_idx:]
+                                    if len(self.mpu_gyro_data[i]) > keep_points:
+                                        self.mpu_gyro_data[i] = self.mpu_gyro_data[i][start_idx:]
+                                    if len(self.adxl_accel_data[i]) > keep_points:
+                                        self.adxl_accel_data[i] = self.adxl_accel_data[i][start_idx:]
                         processed_count += 1
 
                     except queue.Empty:

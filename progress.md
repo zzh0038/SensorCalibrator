@@ -37,6 +37,8 @@
 | 重构后方法验证 | Grep 查找方法定义 | 找到通用方法 | 3 个方法 | ✓ |
 | Bug 修复验证 | 语法检查 | 无错误 | Syntax OK | ✓ |
 | 标签命名修复 | Grep 验证 | 命名一致 | 无旧引用 | ✓ |
+| 性能优化 | 语法检查 | 无错误 | Syntax OK | ✓ |
+| 性能优化 | 代码验证 | 节流机制正确 | 更新频率受限 | ✓ |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |

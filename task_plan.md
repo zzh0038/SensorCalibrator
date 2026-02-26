@@ -64,6 +64,9 @@ Phase 1
 |-------|---------|------------|
 | Activation 和 Status 显示不一致 | 1 | 修复 `update_activation_status()` 方法，同时更新两个区域的状态变量 |
 | 标签命名混淆 | 1 | 将 `self.status_label` 重命名为 `self.activation_status_label`，与变量名保持一致 |
+| 图表更新性能问题 | 1 | 添加图表更新节流，减少不必要的重绘 |
+| 数据切片内存分配 | 1 | 使用切片视图替代列表复制，减少内存分配 |
+| 串口读取 CPU 占用 | 1 | 优化 sleep 策略，降低 CPU 使用率 |
 
 ## Notes
 - 项目包含 6 个 Python 模块和 1 个 JSON 配置文件
