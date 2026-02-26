@@ -681,13 +681,13 @@ class StableSensorCalibrator:
 
         ttk.Label(act_row2, text="Status:", font=("Arial", 9)).pack(side="left", padx=2)
         self.activation_status_var = StringVar(value="Not activated")
-        self.status_label = ttk.Label(
+        self.activation_status_label = ttk.Label(
             act_row2,
             textvariable=self.activation_status_var,
             foreground="red",
             font=("Arial", 9),
         )
-        self.status_label.pack(side="left", padx=2, fill="x", expand=True)
+        self.activation_status_label.pack(side="left", padx=2, fill="x", expand=True)
 
         # 按钮行
         act_btn_row = ttk.Frame(activation_content)
@@ -2202,18 +2202,23 @@ class StableSensorCalibrator:
             )
 
     def update_activation_status(self):
-        """更新激活状态显示"""
+        """更新激活状态显示 - 同时更新 Activation 区域和 Status 区域"""
         if self.sensor_activated:
+            # 更新下方 Status 区域
             self.status_var.set("Activated")
-            # 确保status_label存在
-            if hasattr(self, "status_label"):
-                self.status_label.config(foreground="green")
+            # 更新 Activation 区域
+            self.activation_status_var.set("Activated")
+            if hasattr(self, "activation_status_label"):
+                self.activation_status_label.config(foreground="green")
             if hasattr(self, "activate_btn"):
                 self.activate_btn.config(state="disabled")
         else:
+            # 更新下方 Status 区域
             self.status_var.set("Not activated")
-            if hasattr(self, "status_label"):
-                self.status_label.config(foreground="red")
+            # 更新 Activation 区域
+            self.activation_status_var.set("Not activated")
+            if hasattr(self, "activation_status_label"):
+                self.activation_status_label.config(foreground="red")
             if (
                 hasattr(self, "activate_btn")
                 and self.mac_address

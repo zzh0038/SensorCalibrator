@@ -35,6 +35,8 @@
 | 代码搜索验证 | Grep 查找新代码 | 找到所有新增代码 | 7 处匹配 | ✓ |
 | 重构后语法检查 | python -m py_compile | 无错误 | Syntax OK | ✓ |
 | 重构后方法验证 | Grep 查找方法定义 | 找到通用方法 | 3 个方法 | ✓ |
+| Bug 修复验证 | 语法检查 | 无错误 | Syntax OK | ✓ |
+| 标签命名修复 | Grep 验证 | 命名一致 | 无旧引用 | ✓ |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
