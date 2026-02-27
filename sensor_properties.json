@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-02-24T13:58:54.276780",
+  "timestamp": "2026-02-27T17:05:44.765323",
   "sensor_properties": {
     "sys": {
       "PR": "beijing",
@@ -7,8 +7,8 @@
       "CI": "beijing",
       "LAT": 39.99132,
       "LON": 116.7831,
-      "SSID": "CU_mKUF",
-      "PA": "fyj4h5em",
+      "SSID": "peng and xin",
+      "PA": "121210111",
       "PK": "ha9yyoY8xfJ",
       "DN": "ESP23_BHM_000002",
       "DS": "a51cada886264ef6315da8882fbf653f",

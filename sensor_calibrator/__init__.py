@@ -1,29 +1,39 @@
-class Config:
-    MAX_DATA_POINTS = 2000
-    DISPLAY_DATA_POINTS = 200
-    UPDATE_INTERVAL_MS = 50
-    STATS_WINDOW_SIZE = 100
-    SERIAL_TIMEOUT = 0.1
-    SERIAL_WRITE_TIMEOUT = 1
-    MAX_QUEUE_SIZE = 2000
-    MAX_CONSECUTIVE_ERRORS = 5
-    CALIBRATION_SAMPLES = 100
-    EXPECTED_FREQUENCY = 100
-    COMMAND_DELAY = 2.0
-    RESPONSE_TIMEOUT = 5.0
-    THREAD_JOIN_TIMEOUT = 2.0
-    GRAVITY_CONSTANT = 9.8015
-    
-    SERIAL_CLEANUP_DELAY = 0.5
-    SERIAL_STABILITY_DELAY = 0.5
-    DATA_STREAM_STOP_DELAY = 1.0
-    THREAD_ERROR_DELAY = 0.1
-    PARSE_RETRY_DELAY = 0.05
-    QUICK_SLEEP = 0.01
-    BUFFER_CLEAR_DELAY = 0.5
+"""
+SensorCalibrator Package
+
+A sensor calibration application for MPU6050 and ADXL355 sensors.
+"""
+
+from .config import (
+    Config,
+    SerialConfig,
+    UIConfig,
+    CalibrationConfig,
+    # Backward compatibility
+    MAX_DATA_POINTS,
+    DISPLAY_DATA_POINTS,
+    STATS_WINDOW_SIZE,
+    UPDATE_INTERVAL_MS,
+    GRAVITY_CONSTANT,
+)
+from .data_buffer import SensorDataBuffer
+
+__all__ = [
+    'Config',
+    'SerialConfig',
+    'UIConfig',
+    'CalibrationConfig',
+    'SensorDataBuffer',
+    'MAX_DATA_POINTS',
+    'DISPLAY_DATA_POINTS',
+    'STATS_WINDOW_SIZE',
+    'UPDATE_INTERVAL_MS',
+    'GRAVITY_CONSTANT',
+]
 
 
 def validate_ssid(ssid: str) -> tuple:
+    """Validate WiFi SSID."""
     if not ssid:
         return False, "SSID cannot be empty"
     if len(ssid) > 32:
@@ -32,12 +42,14 @@ def validate_ssid(ssid: str) -> tuple:
 
 
 def validate_password(password: str) -> tuple:
+    """Validate WiFi/Network password."""
     if len(password) > 64:
         return False, "Password too long (max 64 characters)"
     return True, ""
 
 
 def validate_port(port: str) -> tuple:
+    """Validate network port number."""
     if not port:
         return False, "Port cannot be empty"
     try:
@@ -50,6 +62,7 @@ def validate_port(port: str) -> tuple:
 
 
 def validate_url(url: str) -> tuple:
+    """Validate URL format."""
     if not url:
         return True, ""
     if not (url.startswith("http://") or url.startswith("https://")):
