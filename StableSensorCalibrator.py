@@ -19,7 +19,7 @@ import atexit
 from collections import deque
 
 # Import configuration
-from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager
+from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager
 
 matplotlib.use("TkAgg")
 
@@ -218,8 +218,29 @@ class StableSensorCalibrator:
         # left_panel.grid_columnconfigure(0, weight=1)
         # left_panel.grid_columnconfigure(1, weight=0)
 
-        # 左侧面板内容
-        self.setup_left_panel(scrollable_frame)
+        # 左侧面板内容 - 使用 UIManager
+        self.ui_callbacks = {
+            'refresh_ports': self.refresh_ports,
+            'toggle_connection': self.toggle_connection,
+            'toggle_data_stream': self.toggle_data_stream,
+            'toggle_data_stream2': self.toggle_data_stream2,
+            'start_calibration': self.start_calibration,
+            'capture_position': self.capture_position,
+            'send_all_commands': self.send_all_commands,
+            'read_properties': self.read_sensor_properties,
+            'activate_sensor': self.activate_sensor,
+            'verify_activation': self.verify_activation,
+            'set_wifi_config': self.set_wifi_config,
+            'read_wifi_config': self.read_wifi_config,
+            'set_mqtt_config': self.set_mqtt_config,
+            'read_mqtt_config': self.read_mqtt_config,
+            'set_OTA_config': self.set_OTA_config,
+            'read_OTA_config': self.read_OTA_config,
+        }
+        self.ui_manager = UIManager(scrollable_frame, self.ui_callbacks)
+        
+        # 保持对旧变量的引用（兼容性）
+        self._setup_ui_references()
 
         # ========== 右侧图表区域 ==========
         right_panel = ttk.Frame(main_frame)
@@ -270,6 +291,83 @@ class StableSensorCalibrator:
 
         # 启动GUI更新循环
         self.schedule_update_gui()
+
+    def _setup_ui_references(self):
+        """设置UI引用，保持与旧代码的兼容性"""
+        # 串口相关
+        self.port_var = self.ui_manager.get_var('port')
+        self.port_combo = self.ui_manager.get_widget('port_combo')
+        self.refresh_btn = self.ui_manager.get_widget('refresh_btn')
+        self.baud_var = self.ui_manager.get_var('baud')
+        self.connect_btn = self.ui_manager.get_widget('connect_btn')
+        
+        # 数据流相关
+        self.data_btn = self.ui_manager.get_widget('data_btn')
+        self.data_btn2 = self.ui_manager.get_widget('data_btn2')
+        self.freq_var = self.ui_manager.get_var('freq')
+        
+        # 校准相关
+        self.calibrate_btn = self.ui_manager.get_widget('calibrate_btn')
+        self.capture_btn = self.ui_manager.get_widget('capture_btn')
+        self.position_label = self.ui_manager.get_widget('position_label')
+        
+        # 状态相关
+        self.status_var = self.ui_manager.get_var('status')
+        self.status_label = self.ui_manager.get_widget('status_label')
+        
+        # 命令相关
+        self.send_btn = self.ui_manager.get_widget('send_btn')
+        self.read_btn = self.ui_manager.get_widget('read_btn')
+        
+        # 激活相关
+        self.activate_btn = self.ui_manager.get_widget('activate_btn')
+        self.verify_btn = self.ui_manager.get_widget('verify_btn')
+        
+        # WiFi相关
+        self.ssid_var = self.ui_manager.get_var('ssid')
+        self.password_var = self.ui_manager.get_var('password')
+        self.set_wifi_btn = self.ui_manager.get_widget('set_wifi_btn')
+        self.read_wifi_btn = self.ui_manager.get_widget('read_wifi_btn')
+        
+        # MQTT相关
+        self.mqtt_broker_var = self.ui_manager.get_var('mqtt_broker')
+        self.mqtt_user_var = self.ui_manager.get_var('mqtt_user')
+        self.mqtt_password_var = self.ui_manager.get_var('mqtt_password')
+        self.mqtt_port_var = self.ui_manager.get_var('mqtt_port')
+        self.set_mqtt_btn = self.ui_manager.get_widget('set_mqtt_btn')
+        self.read_mqtt_btn = self.ui_manager.get_widget('read_mqtt_btn')
+        
+        # OTA相关
+        self.URL1_var = self.ui_manager.get_var('url1')
+        self.URL2_var = self.ui_manager.get_var('url2')
+        self.URL3_var = self.ui_manager.get_var('url3')
+        self.URL4_var = self.ui_manager.get_var('url4')
+        self.set_ota_btn = self.ui_manager.get_widget('set_ota_btn')
+        self.read_ota_btn = self.ui_manager.get_widget('read_ota_btn')
+        
+        # 统计标签
+        self.stats_labels = {
+            'mpu_accel_x_mean': self.ui_manager.get_var('mpu_accel_x_mean'),
+            'mpu_accel_x_std': self.ui_manager.get_var('mpu_accel_x_std'),
+            'mpu_accel_y_mean': self.ui_manager.get_var('mpu_accel_y_mean'),
+            'mpu_accel_y_std': self.ui_manager.get_var('mpu_accel_y_std'),
+            'mpu_accel_z_mean': self.ui_manager.get_var('mpu_accel_z_mean'),
+            'mpu_accel_z_std': self.ui_manager.get_var('mpu_accel_z_std'),
+            'adxl_accel_x_mean': self.ui_manager.get_var('adxl_accel_x_mean'),
+            'adxl_accel_x_std': self.ui_manager.get_var('adxl_accel_x_std'),
+            'adxl_accel_y_mean': self.ui_manager.get_var('adxl_accel_y_mean'),
+            'adxl_accel_y_std': self.ui_manager.get_var('adxl_accel_y_std'),
+            'adxl_accel_z_mean': self.ui_manager.get_var('adxl_accel_z_mean'),
+            'adxl_accel_z_std': self.ui_manager.get_var('adxl_accel_z_std'),
+            'mpu_gyro_x_mean': self.ui_manager.get_var('mpu_gyro_x_mean'),
+            'mpu_gyro_x_std': self.ui_manager.get_var('mpu_gyro_x_std'),
+            'mpu_gyro_y_mean': self.ui_manager.get_var('mpu_gyro_y_mean'),
+            'mpu_gyro_y_std': self.ui_manager.get_var('mpu_gyro_y_std'),
+            'mpu_gyro_z_mean': self.ui_manager.get_var('mpu_gyro_z_mean'),
+            'mpu_gyro_z_std': self.ui_manager.get_var('mpu_gyro_z_std'),
+            'gravity_mean': self.ui_manager.get_var('gravity_mean'),
+            'gravity_std': self.ui_manager.get_var('gravity_std'),
+        }
 
     def schedule_update_gui(self):
         """调度GUI更新 - 安全版本"""
@@ -432,577 +530,6 @@ class StableSensorCalibrator:
                 d.clear()
         if hasattr(self, "gravity_mag_data"):
             self.gravity_mag_data.clear()
-
-    def setup_left_panel(self, parent):
-        """设置左侧控制面板内容 - 优化布局，减少空隙"""
-        style = ttk.Style()
-        style.configure("Compact.TLabelframe", padding=12)  # 减少内边距
-        # style.configure("Compact.TLabelframe.Label", font=("Arial", 9, "bold"))
-
-        # 标题
-        title_label = ttk.Label(
-            parent, text="Calibration Panel", font=("Arial", 12, "bold")  # 减小字体
-        )
-        title_label.pack(pady=(0, 6))  # 减少下边距
-
-        # ===== 串口设置 =====
-        serial_frame = ttk.LabelFrame(
-            parent, text="Serial Settings", style="Compact.TLabelframe"
-        )
-        serial_frame.pack(fill="x", pady=(0, 5))  # 减少下边距
-
-        # 使用网格布局，更加紧凑
-        serial_grid = ttk.Frame(serial_frame)
-        serial_grid.pack(fill="x", padx=3, pady=2)  # 减少内边距
-
-        # 第一行：端口和刷新按钮
-        port_row = ttk.Frame(serial_grid)
-        port_row.pack(fill="x", pady=1)
-
-        ttk.Label(port_row, text="Port:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.port_var = StringVar()
-        self.port_combo = ttk.Combobox(
-            port_row,
-            textvariable=self.port_var,
-            width=15,  # 增加宽度
-            state="readonly",
-            font=("Arial", 9),
-        )
-        self.port_combo.pack(side="left", padx=2, fill="x", expand=True)
-
-        self.refresh_btn = ttk.Button(
-            port_row, text="Refresh", command=self.refresh_ports, width=8
-        )
-        self.refresh_btn.pack(side="left", padx=2)
-
-        # 第二行：波特率和连接按钮
-        baud_row = ttk.Frame(serial_grid)
-        baud_row.pack(fill="x", pady=1)
-
-        ttk.Label(baud_row, text="Baud:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.baud_var = StringVar(value=str(Config.BAUDRATE_DEFAULT))
-        baud_combo = ttk.Combobox(
-            baud_row,
-            textvariable=self.baud_var,
-            values=[str(b) for b in SerialConfig.BAUD_RATES],
-            width=8,
-            state="readonly",
-            font=("Arial", 9),
-        )
-        baud_combo.pack(side="left", padx=2)
-
-        self.connect_btn = ttk.Button(
-            baud_row, text="Connect", command=self.toggle_connection, width=8
-        )
-        self.connect_btn.pack(side="left", padx=2)
-
-        # ===== 数据流控制 =====
-        stream_frame = ttk.LabelFrame(
-            parent, text="Data Stream", style="Compact.TLabelframe"  # 缩短标题
-        )
-        stream_frame.pack(fill="x", pady=(0, 5))
-
-        stream_content = ttk.Frame(stream_frame)
-        stream_content.pack(fill="x", padx=3, pady=2)
-
-        # 单行布局：按钮和频率显示
-        stream_row = ttk.Frame(stream_content)
-        stream_row.pack(fill="x", pady=2)
-
-        self.data_btn = ttk.Button(
-            stream_row,
-            text="Start RawData",
-            command=self.toggle_data_stream,
-            state="disabled",
-            width=12,  # 减小按钮宽度
-        )
-        self.data_btn.pack(side="left", padx=1)
-
-        self.data_btn2 = ttk.Button(
-            stream_row,
-            text="Start NormalData",
-            command=self.toggle_data_stream2,
-            state="disabled",
-            width=12,  # 减小按钮宽度
-        )
-        self.data_btn2.pack(side="left", padx=2)
-
-        # 频率显示
-        freq_frame = ttk.Frame(stream_row)
-        freq_frame.pack(side="left", padx=5)
-
-        ttk.Label(freq_frame, text="Rate:", font=("Arial", 9)).pack(side="left", padx=1)
-        self.freq_var = StringVar(value="0 Hz")
-        freq_label = ttk.Label(
-            freq_frame,
-            textvariable=self.freq_var,
-            foreground="green",
-            font=("Arial", 9, "bold"),
-        )
-        freq_label.pack(side="left", padx=3)
-
-        # ===== 校准控制 =====
-        calib_frame = ttk.LabelFrame(
-            parent, text="Calibration", style="Compact.TLabelframe"  # 缩短标题
-        )
-        calib_frame.pack(fill="x", pady=(0, 5))
-
-        calib_content = ttk.Frame(calib_frame)
-        calib_content.pack(fill="x", padx=3, pady=2)
-
-        # 校准按钮
-        btn_row = ttk.Frame(calib_content)
-        btn_row.pack(fill="x", pady=1)
-
-        self.calibrate_btn = ttk.Button(
-            btn_row,
-            text="Start Calib",
-            command=self.start_calibration,
-            state="disabled",
-            width=12,
-        )
-        self.calibrate_btn.pack(side="left", padx=2)
-
-        self.capture_btn = ttk.Button(
-            btn_row,
-            text="Capture Pos",
-            command=self.capture_position,
-            state="disabled",
-            width=12,
-        )
-        self.capture_btn.pack(side="left", padx=2)
-
-        # 位置显示
-        self.position_label = ttk.Label(
-            calib_content,
-            text="Position: Not calibrating",
-            font=("Arial", 9),
-            # wraplength=350,  # 允许换行
-        )
-        self.position_label.pack(fill="x", padx=2, pady=1)
-
-        # ===== 实时统计信息 =====
-        stats_frame = ttk.LabelFrame(
-            parent, text="Statistics", style="Compact.TLabelframe"  # 缩短标题
-        )
-        stats_frame.pack(fill="x", pady=(0, 5))
-
-        # 紧凑统计显示，不使用Notebook节省空间
-        stats_grid = ttk.Frame(stats_frame)
-        stats_grid.pack(fill="x", padx=3, pady=2)
-
-        # 存储统计标签
-        self.stats_labels = {}
-
-        # MPU6050加速度计统计
-        mpu_accel_frame = ttk.LabelFrame(stats_grid, text="MPU Accel", padding=2)
-        mpu_accel_frame.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
-        self.setup_compact_stats(mpu_accel_frame, "MPU6050 Accel", "mpu_accel")
-
-        # ADXL355加速度计统计
-        adxl_accel_frame = ttk.LabelFrame(stats_grid, text="ADXL Accel", padding=2)
-        adxl_accel_frame.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
-        self.setup_compact_stats(adxl_accel_frame, "ADXL355 Accel", "adxl_accel")
-
-        # MPU6050陀螺仪统计
-        mpu_gyro_frame = ttk.LabelFrame(stats_grid, text="MPU Gyro", padding=2)
-        mpu_gyro_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=2)
-        self.setup_compact_stats(mpu_gyro_frame, "MPU6050 Gyro", "mpu_gyro")
-
-        # 重力矢量统计
-        gravity_frame = ttk.LabelFrame(stats_grid, text="Gravity", padding=2)
-        gravity_frame.grid(row=1, column=1, sticky="nsew", padx=2, pady=2)
-
-        ttk.Label(
-            gravity_frame, text="Gravity Magnitude:", font=("Arial", 8, "bold")
-        ).pack(anchor="w", padx=2, pady=1)
-
-        gravity_stats_frame = ttk.Frame(gravity_frame)
-        gravity_stats_frame.pack(fill="x", padx=5, pady=1)
-
-        gravity_mean_var = StringVar(value="Mean: 0.000")
-        ttk.Label(
-            gravity_stats_frame, textvariable=gravity_mean_var, font=("Courier", 8)
-        ).pack(anchor="w")
-
-        gravity_std_var = StringVar(value="Std: 0.000")
-        ttk.Label(
-            gravity_stats_frame, textvariable=gravity_std_var, font=("Courier", 8)
-        ).pack(anchor="w")
-
-        self.stats_labels["gravity_mean"] = gravity_mean_var
-        self.stats_labels["gravity_std"] = gravity_std_var
-
-        # 配置网格权重
-        stats_grid.columnconfigure(0, weight=1)
-        stats_grid.columnconfigure(1, weight=1)
-        stats_grid.rowconfigure(0, weight=1)
-        stats_grid.rowconfigure(1, weight=1)
-
-        # ===== 命令控制 =====
-        cmd_frame = ttk.LabelFrame(parent, text="Commands", style="Compact.TLabelframe")
-        cmd_frame.pack(fill="x", pady=(0, 5))
-
-        cmd_content = ttk.Frame(cmd_frame)
-        cmd_content.pack(fill="x", padx=3, pady=2)
-
-        # 两行按钮布局
-        row1 = ttk.Frame(cmd_content)
-        row1.pack(fill="x", pady=1)
-
-        self.send_btn = ttk.Button(
-            row1,
-            text="Send Commands",
-            command=self.send_all_commands,
-            state="disabled",
-            width=15,
-        )
-        self.send_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        self.save_btn = ttk.Button(
-            row1,
-            text="Save Params",
-            command=self.save_calibration_parameters,
-            state="disabled",
-            width=15,
-        )
-        self.save_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        row2 = ttk.Frame(cmd_content)
-        row2.pack(fill="x", pady=1)
-
-        self.read_props_btn = ttk.Button(
-            row2,
-            text="Read Props",
-            command=self.read_sensor_properties,
-            state="disabled",
-            width=15,
-        )
-        self.read_props_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        self.resend_btn = ttk.Button(
-            row2,
-            text="Resend",
-            command=self.resend_all_commands,
-            state="disabled",
-            width=15,
-        )
-        self.resend_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        # ===== 坐标模式控制 =====
-        coord_frame = ttk.LabelFrame(parent, text="Coordinate Mode", style="Compact.TLabelframe")
-        coord_frame.pack(fill="x", pady=(0, 5))
-
-        coord_content = ttk.Frame(coord_frame)
-        coord_content.pack(fill="x", padx=3, pady=2)
-
-        coord_row = ttk.Frame(coord_content)
-        coord_row.pack(fill="x", pady=1)
-
-        self.local_coord_btn = ttk.Button(
-            coord_row,
-            text="Local Coord (SS:2)",
-            command=self.set_local_coordinate_mode,
-            state="disabled",
-            width=18,
-        )
-        self.local_coord_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        self.global_coord_btn = ttk.Button(
-            coord_row,
-            text="Global Coord (SS:3)",
-            command=self.set_global_coordinate_mode,
-            state="disabled",
-            width=18,
-        )
-        self.global_coord_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        # ===== 传感器激活 =====
-        activation_frame = ttk.LabelFrame(
-            parent, text="Activation", style="Compact.TLabelframe"  # 缩短标题
-        )
-        activation_frame.pack(fill="x", pady=(0, 5))
-
-        activation_content = ttk.Frame(activation_frame)
-        activation_content.pack(fill="x", padx=3, pady=2)
-
-        # 两行布局
-        act_row1 = ttk.Frame(activation_content)
-        act_row1.pack(fill="x", pady=1)
-
-        ttk.Label(act_row1, text="MAC:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.mac_var = StringVar(value="Not detected")
-        mac_label = ttk.Label(
-            act_row1, textvariable=self.mac_var, foreground="blue", font=("Arial", 9)
-        )
-        mac_label.pack(side="left", padx=2, fill="x", expand=True)
-
-        act_row2 = ttk.Frame(activation_content)
-        act_row2.pack(fill="x", pady=1)
-
-        ttk.Label(act_row2, text="Status:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.activation_status_var = StringVar(value="Not activated")
-        self.activation_status_label = ttk.Label(
-            act_row2,
-            textvariable=self.activation_status_var,
-            foreground="red",
-            font=("Arial", 9),
-        )
-        self.activation_status_label.pack(side="left", padx=2, fill="x", expand=True)
-
-        # 按钮行
-        act_btn_row = ttk.Frame(activation_content)
-        act_btn_row.pack(fill="x", pady=2)
-
-        self.activate_btn = ttk.Button(
-            act_btn_row,
-            text="Activate",
-            command=self.activate_sensor,
-            state="disabled",
-            width=10,
-        )
-        self.activate_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        self.verify_btn = ttk.Button(
-            act_btn_row,
-            text="Verify",
-            command=self.verify_activation,
-            state="disabled",
-            width=10,
-        )
-        self.verify_btn.pack(side="left", padx=2, expand=True, fill="x")
-
-        # ===== 状态显示 =====
-        status_frame = ttk.LabelFrame(
-            parent, text="Status", style="Compact.TLabelframe"  # 缩短标题
-        )
-        status_frame.pack(fill="x", pady=(0, 5))
-
-        status_content = ttk.Frame(status_frame)
-        status_content.pack(fill="x", padx=3, pady=2)
-
-        self.status_var = StringVar(value="Ready")
-        status_label = ttk.Label(
-            status_content,
-            textvariable=self.status_var,
-            font=("Arial", 9),
-            foreground="blue",
-        )
-        status_label.pack(pady=1)
-
-        # ===== WiFi设置 =====
-        wifi_frame = ttk.LabelFrame(
-            parent, text="WiFi Settings", style="Compact.TLabelframe"
-        )
-        wifi_frame.pack(fill="x", pady=(0, 5))
-
-        wifi_content = ttk.Frame(wifi_frame)
-        wifi_content.pack(fill="x", padx=5, pady=2)
-
-        # SSID设置
-        ssid_frame = ttk.Frame(wifi_content)
-        ssid_frame.pack(fill="x", pady=1)
-
-        ttk.Label(ssid_frame, text="SSID:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.ssid_var = StringVar()
-        ssid_entry = ttk.Entry(
-            ssid_frame, textvariable=self.ssid_var, font=("Arial", 9), width=20
-        )
-        ssid_entry.pack(side="left", padx=2, fill="x", expand=True)
-
-        # 密码设置
-        password_frame = ttk.Frame(wifi_content)
-        password_frame.pack(fill="x", pady=1)
-
-        ttk.Label(password_frame, text="Password:", font=("Arial", 9)).pack(
-            side="left", padx=2
-        )
-        self.password_var = StringVar()
-        password_entry = ttk.Entry(
-            password_frame,
-            textvariable=self.password_var,
-            show="*",
-            font=("Arial", 9),
-            width=20,
-        )
-        password_entry.pack(side="left", padx=2, fill="x", expand=True)
-
-        # WiFi设置按钮
-        wifi_btn_frame = ttk.Frame(wifi_content)
-        wifi_btn_frame.pack(fill="x", pady=2)
-
-        self.set_wifi_btn = ttk.Button(
-            wifi_btn_frame,
-            text="Set WiFi",
-            command=self.set_wifi_config,
-            state="disabled",
-            width=10,
-        )
-        self.set_wifi_btn.pack(side="left", padx=2)
-
-        self.read_wifi_btn = ttk.Button(
-            wifi_btn_frame,
-            text="Read WiFi",
-            command=self.read_wifi_config,
-            state="disabled",
-            width=10,
-        )
-        self.read_wifi_btn.pack(side="left", padx=2)
-
-        # ===== MQTT设置 =====
-        mqtt_frame = ttk.LabelFrame(
-            parent, text="MQTT Settings", style="Compact.TLabelframe"
-        )
-        mqtt_frame.pack(fill="x", pady=(0, 5))
-
-        mqtt_content = ttk.Frame(mqtt_frame)
-        mqtt_content.pack(fill="x", padx=5, pady=2)
-
-        # MQTT代理设置
-        broker_frame = ttk.Frame(mqtt_content)
-        broker_frame.pack(fill="x", pady=1)
-
-        ttk.Label(broker_frame, text="Broker:", font=("Arial", 9)).pack(
-            side="left", padx=2
-        )
-        self.mqtt_broker_var = StringVar()
-        broker_entry = ttk.Entry(
-            broker_frame, textvariable=self.mqtt_broker_var, font=("Arial", 9), width=20
-        )
-        broker_entry.pack(side="left", padx=2, fill="x", expand=True)
-
-        # 用户名设置
-        user_frame = ttk.Frame(mqtt_content)
-        user_frame.pack(fill="x", pady=1)
-
-        ttk.Label(user_frame, text="Username:", font=("Arial", 9)).pack(
-            side="left", padx=2
-        )
-        self.mqtt_user_var = StringVar()
-        user_entry = ttk.Entry(
-            user_frame, textvariable=self.mqtt_user_var, font=("Arial", 9), width=20
-        )
-        user_entry.pack(side="left", padx=2, fill="x", expand=True)
-
-        # 密码设置
-        mqtt_pwd_frame = ttk.Frame(mqtt_content)
-        mqtt_pwd_frame.pack(fill="x", pady=1)
-
-        ttk.Label(mqtt_pwd_frame, text="Password:", font=("Arial", 9)).pack(
-            side="left", padx=2
-        )
-        self.mqtt_password_var = StringVar()
-        mqtt_pwd_entry = ttk.Entry(
-            mqtt_pwd_frame,
-            textvariable=self.mqtt_password_var,
-            show="*",
-            font=("Arial", 9),
-            width=20,
-        )
-        mqtt_pwd_entry.pack(side="left", padx=2, fill="x", expand=True)
-
-        # 端口设置
-        port_frame = ttk.Frame(mqtt_content)
-        port_frame.pack(fill="x", pady=1)
-
-        ttk.Label(port_frame, text="Port:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.mqtt_port_var = StringVar(value="1883")
-        port_entry = ttk.Entry(
-            port_frame, textvariable=self.mqtt_port_var, font=("Arial", 9), width=10
-        )
-        port_entry.pack(side="left", padx=2)
-
-        # MQTT设置按钮
-        mqtt_btn_frame = ttk.Frame(mqtt_content)
-        mqtt_btn_frame.pack(fill="x", pady=2)
-
-        self.set_mqtt_btn = ttk.Button(
-            mqtt_btn_frame,
-            text="Set MQTT",
-            command=self.set_mqtt_config,
-            state="disabled",
-            width=10,
-        )
-        self.set_mqtt_btn.pack(side="left", padx=2)
-
-        self.read_mqtt_btn = ttk.Button(
-            mqtt_btn_frame,
-            text="Read MQTT",
-            command=self.read_mqtt_config,
-            state="disabled",
-            width=10,
-        )
-        self.read_mqtt_btn.pack(side="left", padx=2)
-        # =====OTA设置 =====
-        OTA_frame = ttk.LabelFrame(
-            parent, text="OTA Settings", style="Compact.TLabelframe"
-        )
-        OTA_frame.pack(fill="x", pady=(0, 5))
-
-        OTA_content = ttk.Frame(OTA_frame)
-        OTA_content.pack(fill="x", padx=5, pady=2)
-
-        # URL1设置
-        URL1_frame = ttk.Frame(OTA_content)
-        URL1_frame.pack(fill="x", pady=1)
-
-        ttk.Label(URL1_frame, text="URL1:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.URL1_var = StringVar()
-        URL1_entry = ttk.Entry(
-            URL1_frame, textvariable=self.URL1_var, font=("Arial", 9), width=20
-        )
-        URL1_entry.pack(side="left", padx=2, fill="x", expand=True)
-        # URL2设置
-        URL2_frame = ttk.Frame(OTA_content)
-        URL2_frame.pack(fill="x", pady=1)
-
-        ttk.Label(URL2_frame, text="URL2:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.URL2_var = StringVar()
-        URL2_entry = ttk.Entry(
-            URL2_frame, textvariable=self.URL2_var, font=("Arial", 9), width=20
-        )
-        URL2_entry.pack(side="left", padx=2, fill="x", expand=True)
-        # URL3设置
-        URL3_frame = ttk.Frame(OTA_content)
-        URL3_frame.pack(fill="x", pady=1)
-
-        ttk.Label(URL3_frame, text="URL3:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.URL3_var = StringVar()
-        URL3_entry = ttk.Entry(
-            URL3_frame, textvariable=self.URL3_var, font=("Arial", 9), width=20
-        )
-        URL3_entry.pack(side="left", padx=2, fill="x", expand=True)
-        # URL1设置
-        URL4_frame = ttk.Frame(OTA_content)
-        URL4_frame.pack(fill="x", pady=1)
-
-        ttk.Label(URL4_frame, text="URL4:", font=("Arial", 9)).pack(side="left", padx=2)
-        self.URL4_var = StringVar()
-        URL4_entry = ttk.Entry(
-            URL4_frame, textvariable=self.URL4_var, font=("Arial", 9), width=20
-        )
-        URL4_entry.pack(side="left", padx=2, fill="x", expand=True)
-        # MQTT设置按钮
-        OTA_btn_frame = ttk.Frame(OTA_content)
-        OTA_btn_frame.pack(fill="x", pady=2)
-
-        self.set_OTA_btn = ttk.Button(
-            OTA_btn_frame,
-            text="Set OTA",
-            command=self.set_OTA_config,
-            state="disabled",
-            width=10,
-        )
-        self.set_OTA_btn.pack(side="left", padx=2)
-
-        self.read_OTA_btn = ttk.Button(
-            OTA_btn_frame,
-            text="Read OTA",
-            command=self.read_OTA_config,
-            state="disabled",
-            width=10,
-        )
-        self.read_OTA_btn.pack(side="left", padx=2)
 
     def set_wifi_config(self):
         """设置WiFi配置"""
@@ -1416,37 +943,6 @@ class StableSensorCalibrator:
 
         except Exception as e:
             self.log_message(f"Error loading network configuration: {str(e)}")
-
-    def setup_compact_stats(self, parent, title, sensor_key):
-        """设置紧凑的统计信息显示"""
-        ttk.Label(parent, text=title, font=("Arial", 9, "bold")).pack(
-            anchor="w", padx=2, pady=2
-        )
-
-        axes = ["X", "Y", "Z"]
-        for i, axis in enumerate(axes):
-            axis_frame = ttk.Frame(parent)
-            axis_frame.pack(fill="x", padx=5, pady=1)
-
-            ttk.Label(axis_frame, text=f"{axis}:", width=2, font=("Arial", 8)).pack(
-                side="left"
-            )
-
-            # 均值标签
-            mean_var = StringVar(value="0.000")
-            mean_label = ttk.Label(
-                axis_frame, textvariable=mean_var, font=("Courier", 9)
-            )
-            mean_label.pack(side="left", padx=3)
-
-            # 标准差标签
-            std_var = StringVar(value="0.000")
-            std_label = ttk.Label(axis_frame, textvariable=std_var, font=("Courier", 9))
-            std_label.pack(side="left", padx=3)
-
-            # 存储标签引用
-            self.stats_labels[f"{sensor_key}_{axis.lower()}_mean"] = mean_var
-            self.stats_labels[f"{sensor_key}_{axis.lower()}_std"] = std_var
 
     def setup_stats_grid(self, parent, sensor_name):
         """设置统计信息网格 - 修复键名生成"""
