@@ -17,6 +17,7 @@ from .config import (
     GRAVITY_CONSTANT,
 )
 from .data_buffer import SensorDataBuffer
+from .chart_manager import ChartManager
 
 __all__ = [
     'Config',
@@ -24,6 +25,7 @@ __all__ = [
     'UIConfig',
     'CalibrationConfig',
     'SensorDataBuffer',
+    'ChartManager',
     'MAX_DATA_POINTS',
     'DISPLAY_DATA_POINTS',
     'STATS_WINDOW_SIZE',

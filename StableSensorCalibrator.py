@@ -19,7 +19,7 @@ import atexit
 from collections import deque
 
 # Import configuration
-from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig
+from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager
 
 matplotlib.use("TkAgg")
 
@@ -124,23 +124,17 @@ class StableSensorCalibrator:
         self.after_tasks = []
 
         # 新增：性能优化相关变量
-        self.last_chart_update = 0
-        self.chart_update_interval = Config.CHART_UPDATE_INTERVAL  # 图表更新间隔（秒），限制为10 FPS
         self.last_stats_update = 0
         self.stats_update_interval = Config.STATS_UPDATE_INTERVAL   # 统计信息更新间隔（秒）
-        self.last_y_limit_update = 0
-        self.y_limit_update_interval = Config.Y_LIMIT_UPDATE_INTERVAL  # Y轴更新间隔
-        
-        # Blit优化相关变量
-        self._blit_backgrounds = None    # 缓存的背景
-        self._blit_axes = []             # 需要刷新的axes
-        self._blit_initialized = False   # 是否已初始化blit
         
         # 窗口移动检测相关变量
         self._window_moving = False
         self._window_move_timer = None
         self._last_window_pos = None
         self._window_configure_count = 0
+        
+        # 图表管理器（在setup_gui中初始化）
+        self.chart_manager = None
 
         # 设置GUI
         self.setup_gui()
@@ -233,9 +227,10 @@ class StableSensorCalibrator:
         right_panel.grid_rowconfigure(0, weight=1)
         right_panel.grid_columnconfigure(0, weight=1)
 
-        # 创建图表
-        self.setup_plots()
-        self.canvas = FigureCanvasTkAgg(self.fig, master=right_panel)
+        # 创建图表管理器
+        self.chart_manager = ChartManager(right_panel)
+        self.chart_manager.setup_plots()
+        self.canvas = self.chart_manager.get_canvas()
         self.canvas.draw()
         self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -1502,142 +1497,6 @@ class StableSensorCalibrator:
             self.stats_labels[mean_key] = mean_var
             self.stats_labels[std_key] = std_var
 
-    def setup_plots(self):
-        """设置matplotlib图表"""
-        self.fig, self.axes = plt.subplots(2, 2, figsize=(14, 9))
-        self.fig.suptitle("Sensor Data Visualization with Statistics", fontsize=14)
-
-        # 设置全局字体大小
-        plt.rcParams["font.size"] = 10
-        plt.rcParams["axes.titlesize"] = 12
-        plt.rcParams["axes.labelsize"] = 11
-        plt.rcParams["legend.fontsize"] = 10
-
-        self.fig.suptitle("Sensor Data Visualization with Statistics", fontsize=14)
-
-        # 设置子图
-        colors = [UIConfig.CHART_COLOR_X, UIConfig.CHART_COLOR_Y, UIConfig.CHART_COLOR_Z]  # 红, 绿, 蓝
-        labels = ["X", "Y", "Z"]
-
-        # MPU6050加速度计
-        self.ax1 = self.axes[0, 0]
-        self.ax1.set_title(
-            "MPU6050 Accelerometer (m/s²)", fontweight="bold", fontsize=12
-        )
-        self.ax1.set_ylabel("Acceleration", fontsize=11)
-        self.ax1.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
-        self.ax1.set_facecolor("#ffffff")
-
-        # 添加统计信息文本框
-        self.ax1_stats_text = self.ax1.text(
-            0.02,
-            0.98,
-            "",
-            transform=self.ax1.transAxes,
-            fontsize=10,
-            verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
-        )
-
-        self.mpu_accel_lines = []
-        for i in range(3):
-            (line,) = self.ax1.plot(
-                [], [], color=colors[i], label=labels[i], linewidth=1.5, alpha=0.8
-            )
-            self.mpu_accel_lines.append(line)
-        self.ax1.legend(loc="upper right", fontsize=10)  # 减小字体
-
-        # ADXL355加速度计
-        self.ax2 = self.axes[0, 1]
-        self.ax2.set_title(
-            "ADXL355 Accelerometer (m/s²)", fontweight="bold", fontsize=12
-        )
-        self.ax2.set_ylabel("Acceleration", fontsize=11)
-        self.ax2.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
-        self.ax2.set_facecolor("#ffffff")
-
-        self.ax2_stats_text = self.ax2.text(
-            0.02,
-            0.98,
-            "",
-            transform=self.ax2.transAxes,
-            fontsize=10,
-            verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
-        )
-
-        self.adxl_accel_lines = []
-        for i in range(3):
-            (line,) = self.ax2.plot(
-                [], [], color=colors[i], label=labels[i], linewidth=1.5, alpha=0.8
-            )
-            self.adxl_accel_lines.append(line)
-        self.ax2.legend(loc="upper right", fontsize=8)
-
-        # MPU6050陀螺仪
-        self.ax3 = self.axes[1, 0]
-        self.ax3.set_title("MPU6050 Gyroscope (rad/s)", fontweight="bold", fontsize=12)
-        self.ax3.set_ylabel("Angular Velocity", fontsize=11)
-        self.ax3.set_xlabel("Time (s)", fontsize=11)
-        self.ax3.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
-        self.ax3.set_facecolor("#ffffff")
-
-        self.ax3_stats_text = self.ax3.text(
-            0.02,
-            0.98,
-            "",
-            transform=self.ax3.transAxes,
-            fontsize=10,
-            verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
-        )
-
-        self.mpu_gyro_lines = []
-        for i in range(3):
-            (line,) = self.ax3.plot(
-                [], [], color=colors[i], label=labels[i], linewidth=1.5, alpha=0.8
-            )
-            self.mpu_gyro_lines.append(line)
-        self.ax3.legend(loc="upper right", fontsize=8)
-
-        # 重力矢量模长
-        self.ax4 = self.axes[1, 1]
-        self.ax4.set_title(
-            "Gravity Vector Magnitude (m/s²)", fontweight="bold", fontsize=11
-        )
-        self.ax4.set_ylabel("Magnitude", fontsize=10)
-        self.ax4.set_xlabel("Sample", fontsize=10)
-        self.ax4.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
-        self.ax4.set_facecolor("#ffffff")
-
-        self.ax4_stats_text = self.ax4.text(
-            0.02,
-            0.98,
-            "",
-            transform=self.ax4.transAxes,
-            fontsize=10,
-            verticalalignment="top",
-            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
-        )
-
-        (self.gravity_line,) = self.ax4.plot(
-            [], [], color="#ff9900", label="Gravity", linewidth=2.0, alpha=0.8
-        )
-        self.ax4.legend(loc="upper right", fontsize=8)
-
-        # 设置初始坐标轴范围
-        self.ax1.set_xlim(0, 10)
-        self.ax2.set_xlim(0, 10)
-        self.ax3.set_xlim(0, 10)
-        self.ax4.set_xlim(0, 200)
-
-        self.ax1.set_ylim(-20, 20)
-        self.ax2.set_ylim(-20, 20)
-        self.ax3.set_ylim(-10, 10)
-        self.ax4.set_ylim(0, 20)
-
-        plt.tight_layout()
-
     def refresh_ports(self):
         """刷新可用串口列表"""
         ports = []
@@ -2625,221 +2484,50 @@ class StableSensorCalibrator:
         for key in sorted(self.stats_labels.keys()):
             self.log_message(f"  {key}")
 
-    def _init_blit(self):
-        """初始化blit优化 - 缓存静态背景"""
-        if not Config.ENABLE_BLIT_OPTIMIZATION or self._blit_initialized:
-            return
-        
-        try:
-            # 获取所有需要刷新的axes
-            self._blit_axes = []
-            for attr in ['ax1', 'ax2', 'ax3', 'ax4']:
-                if hasattr(self, attr):
-                    self._blit_axes.append(getattr(self, attr))
-            
-            # 获取所有需要刷新的artists（线条和文本）
-            self._blit_artists = []
-            if hasattr(self, 'mpu_accel_lines'):
-                self._blit_artists.extend(self.mpu_accel_lines)
-            if hasattr(self, 'adxl_accel_lines'):
-                self._blit_artists.extend(self.adxl_accel_lines)
-            if hasattr(self, 'mpu_gyro_lines'):
-                self._blit_artists.extend(self.mpu_gyro_lines)
-            if hasattr(self, 'gravity_line'):
-                self._blit_artists.append(self.gravity_line)
-            if hasattr(self, 'ax1_stats_text'):
-                self._blit_artists.append(self.ax1_stats_text)
-            if hasattr(self, 'ax2_stats_text'):
-                self._blit_artists.append(self.ax2_stats_text)
-            if hasattr(self, 'ax3_stats_text'):
-                self._blit_artists.append(self.ax3_stats_text)
-            if hasattr(self, 'ax4_stats_text'):
-                self._blit_artists.append(self.ax4_stats_text)
-            
-            # 缓存背景
-            self._blit_backgrounds = {}
-            for ax in self._blit_axes:
-                ax.figure.canvas.draw()
-                self._blit_backgrounds[ax] = ax.figure.canvas.copy_from_bbox(ax.bbox)
-            
-            self._blit_initialized = True
-        except Exception as e:
-            # blit初始化失败，回退到普通模式
-            self._blit_initialized = False
-    
     def update_charts(self):
-        """更新图表 - 性能优化版本（支持blit）"""
+        """更新图表 - 使用ChartManager"""
         if (
             self.exiting
+            or not self.chart_manager
             or not hasattr(self, "time_data")
             or not self.time_data
             or len(self.time_data) < 2
         ):
             return
         
-        # 频率控制
-        current_time = time.time()
-        if current_time - self.last_chart_update < self.chart_update_interval:
-            return
-        self.last_chart_update = current_time
-
-        try:
-            # 初始化blit（第一次调用时）
-            if Config.ENABLE_BLIT_OPTIMIZATION and not self._blit_initialized:
-                self._init_blit()
-
-            # 获取当前时间
-            time_val = self.time_data[-1] if self.time_data else 0
-
-            # 设置X轴范围，显示最近10秒的数据
-            time_window = Config.CHART_TIME_WINDOW
-            x_min = max(0, time_val - time_window)
-            x_max = time_val
-
-            # 转换deque为list用于绘图（使用切片获取最近数据）
-            time_list = list(self.time_data)
-            
-            # 数据降采样（可选优化）
-            if Config.ENABLE_DATA_DECIMATION and len(time_list) > Config.DISPLAY_DATA_POINTS * 2:
-                decimation = Config.CHART_DECIMATION_FACTOR
-                time_list = time_list[::decimation]
-                mpu_accel_list = [list(d)[::decimation] for d in self.mpu_accel_data]
-                mpu_gyro_list = [list(d)[::decimation] for d in self.mpu_gyro_data]
-                adxl_accel_list = [list(d)[::decimation] for d in self.adxl_accel_data]
-            else:
-                mpu_accel_list = [list(d) for d in self.mpu_accel_data]
-                mpu_gyro_list = [list(d) for d in self.mpu_gyro_data]
-                adxl_accel_list = [list(d) for d in self.adxl_accel_data]
-
-            # 确保有足够的数据点
-            if len(time_list) > 1:
-                # 更新MPU6050加速度计图表
-                for i in range(3):
-                    if (
-                        len(mpu_accel_list[i]) == len(time_list)
-                        and len(self.mpu_accel_lines) > i
-                    ):
-                        self.mpu_accel_lines[i].set_data(
-                            time_list, mpu_accel_list[i]
-                        )
-
-                # 更新ADXL355加速度计图表
-                for i in range(3):
-                    if (
-                        len(adxl_accel_list[i]) == len(time_list)
-                        and len(self.adxl_accel_lines) > i
-                    ):
-                        self.adxl_accel_lines[i].set_data(
-                            time_list, adxl_accel_list[i]
-                        )
-
-                # 更新MPU6050陀螺仪图表
-                for i in range(3):
-                    if (
-                        len(mpu_gyro_list[i]) == len(time_list)
-                        and len(self.mpu_gyro_lines) > i
-                    ):
-                        self.mpu_gyro_lines[i].set_data(
-                            time_list, mpu_gyro_list[i]
-                        )
-
-                # 更新重力矢量模长图表
-                gravity_list = list(self.gravity_mag_data)
-                if len(gravity_list) == len(self.time_data) and hasattr(
-                    self, "gravity_line"
-                ):
-                    display_points = min(len(time_list), Config.DISPLAY_DATA_POINTS)
-                    start_idx = max(0, len(time_list) - display_points)
-                    sample_numbers = list(range(display_points))
-                    if Config.ENABLE_DATA_DECIMATION and len(gravity_list) > Config.DISPLAY_DATA_POINTS * 2:
-                        gravity_display = list(self.gravity_mag_data)[::Config.CHART_DECIMATION_FACTOR][start_idx:]
-                    else:
-                        gravity_display = list(self.gravity_mag_data)[start_idx:]
-                    if len(gravity_display) == len(sample_numbers):
-                        self.gravity_line.set_data(sample_numbers, gravity_display)
-                    if hasattr(self, "ax4"):
-                        self.ax4.set_xlim(0, display_points)
-
-                # 更新X轴范围
-                if hasattr(self, "ax1"):
-                    self.ax1.set_xlim(x_min, x_max)
-                if hasattr(self, "ax2"):
-                    self.ax2.set_xlim(x_min, x_max)
-                if hasattr(self, "ax3"):
-                    self.ax3.set_xlim(x_min, x_max)
-
-                # 动态调整Y轴范围（带频率控制）
-                if current_time - self.last_y_limit_update >= self.y_limit_update_interval:
-                    self.adjust_y_limits()
-                    self.last_y_limit_update = current_time
-
-                # 更新图表统计信息显示
-                self.update_chart_statistics()
-
-                # 使用blit或普通绘制
-                if hasattr(self, "canvas"):
-                    if Config.ENABLE_BLIT_OPTIMIZATION and self._blit_initialized:
-                        self._update_with_blit()
-                    else:
-                        self.canvas.draw_idle()
-
-        except Exception as e:
-            # 忽略绘图错误
-            pass
+        # 准备数据字典
+        data_dict = {
+            'time': list(self.time_data),
+            'mpu_accel': [list(d) for d in self.mpu_accel_data],
+            'adxl_accel': [list(d) for d in self.adxl_accel_data],
+            'mpu_gyro': [list(d) for d in self.mpu_gyro_data],
+            'gravity': list(self.gravity_mag_data),
+        }
+        
+        # 使用ChartManager更新图表
+        updated = self.chart_manager.update_charts(data_dict)
+        
+        # 如果图表更新成功，更新统计信息
+        if updated:
+            self._update_chart_statistics_to_manager()
     
-    def _update_with_blit(self):
-        """使用blit技术高效更新图表"""
-        try:
-            # 恢复背景
-            for ax, bg in self._blit_backgrounds.items():
-                self.canvas.restore_region(bg)
-            
-            # 重绘变化的artists
-            for artist in self._blit_artists:
-                if hasattr(artist, 'axes') and artist.axes:
-                    artist.axes.draw_artist(artist)
-            
-            # 更新显示
-            self.canvas.blit(self.fig.bbox)
-            self.canvas.flush_events()
-        except Exception as e:
-            # blit失败，回退到普通绘制
-            self.canvas.draw_idle()
-
-    def update_chart_statistics(self):
-        """更新图表中的统计信息文本"""
-        # MPU6050加速度计统计文本
-        stats_text1 = f"Recent Stats (last {self.stats_window_size} samples):\n"
-        for i, axis in enumerate(["X", "Y", "Z"]):
-            stats_text1 += (
-                f"{axis}: μ={self.real_time_stats['mpu_accel_mean'][i]:6.3f} "
-                f"σ={self.real_time_stats['mpu_accel_std'][i]:6.3f}\n"
-            )
-        self.ax1_stats_text.set_text(stats_text1)
-
-        # ADXL355加速度计统计文本
-        stats_text2 = f"Recent Stats (last {self.stats_window_size} samples):\n"
-        for i, axis in enumerate(["X", "Y", "Z"]):
-            stats_text2 += (
-                f"{axis}: μ={self.real_time_stats['adxl_accel_mean'][i]:6.3f} "
-                f"σ={self.real_time_stats['adxl_accel_std'][i]:6.3f}\n"
-            )
-        self.ax2_stats_text.set_text(stats_text2)
-
-        # MPU6050陀螺仪统计文本
-        stats_text3 = f"Recent Stats (last {self.stats_window_size} samples):\n"
-        for i, axis in enumerate(["X", "Y", "Z"]):
-            stats_text3 += (
-                f"{axis}: μ={self.real_time_stats['mpu_gyro_mean'][i]:6.3f} "
-                f"σ={self.real_time_stats['mpu_gyro_std'][i]:6.3f}\n"
-            )
-        self.ax3_stats_text.set_text(stats_text3)
-
-        # 重力矢量统计文本
-        stats_text4 = f"Recent Stats (last {self.stats_window_size} samples):\n"
-        stats_text4 += f"Mean: {self.real_time_stats['gravity_mean']:6.3f}\n"
-        stats_text4 += f"Std: {self.real_time_stats['gravity_std']:6.3f}"
-        self.ax4_stats_text.set_text(stats_text4)
+    def _update_chart_statistics_to_manager(self):
+        """将统计信息传递给ChartManager更新"""
+        if not self.chart_manager:
+            return
+        
+        stats_dict = {
+            'window_size': self.stats_window_size,
+            'mpu_accel_mean': self.real_time_stats['mpu_accel_mean'],
+            'mpu_accel_std': self.real_time_stats['mpu_accel_std'],
+            'adxl_accel_mean': self.real_time_stats['adxl_accel_mean'],
+            'adxl_accel_std': self.real_time_stats['adxl_accel_std'],
+            'mpu_gyro_mean': self.real_time_stats['mpu_gyro_mean'],
+            'mpu_gyro_std': self.real_time_stats['mpu_gyro_std'],
+            'gravity_mean': self.real_time_stats['gravity_mean'],
+            'gravity_std': self.real_time_stats['gravity_std'],
+        }
+        self.chart_manager.update_statistics_text(stats_dict)
 
     def adjust_y_limits(self):
         """调整Y轴范围 - 优化版（使用numpy向量化计算）"""
