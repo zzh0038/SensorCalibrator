@@ -211,7 +211,11 @@ class StableSensorCalibrator:
             'start_calibration': self.start_calibration,
             'capture_position': self.capture_position,
             'send_all_commands': self.send_all_commands,
+            'save_calibration_parameters': self.save_calibration_parameters,
             'read_properties': self.read_sensor_properties,
+            'resend_all_commands': self.resend_all_commands,
+            'set_local_coordinate_mode': self.set_local_coordinate_mode,
+            'set_global_coordinate_mode': self.set_global_coordinate_mode,
             'activate_sensor': self.activate_sensor,
             'verify_activation': self.verify_activation,
             'set_wifi_config': self.set_wifi_config,
@@ -315,7 +319,14 @@ class StableSensorCalibrator:
         
         # 命令相关
         self.send_btn = self.ui_manager.get_widget('send_btn')
+        self.save_btn = self.ui_manager.get_widget('save_btn')
         self.read_btn = self.ui_manager.get_widget('read_btn')
+        self.read_props_btn = self.ui_manager.get_widget('read_props_btn')
+        self.resend_btn = self.ui_manager.get_widget('resend_btn')
+        
+        # 坐标模式相关
+        self.local_coord_btn = self.ui_manager.get_widget('local_coord_btn')
+        self.global_coord_btn = self.ui_manager.get_widget('global_coord_btn')
         
         # 激活相关
         self.activate_btn = self.ui_manager.get_widget('activate_btn')

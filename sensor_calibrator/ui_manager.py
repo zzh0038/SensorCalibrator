@@ -44,6 +44,7 @@ class UIManager:
         self._setup_calibration_section()
         self._setup_statistics_section()
         self._setup_commands_section()
+        self._setup_coordinate_section()
         self._setup_activation_section()
         self._setup_network_section()
         self._setup_wifi_section()
@@ -310,18 +311,73 @@ class UIManager:
             state="disabled",
             width=15,
         )
-        send_btn.pack(side="left", padx=2)
+        send_btn.pack(side="left", padx=2, expand=True, fill="x")
         self.widgets['send_btn'] = send_btn
         
-        read_btn = ttk.Button(
+        save_btn = ttk.Button(
             row1,
+            text="Save Params",
+            command=self.callbacks.get('save_calibration_parameters', lambda: None),
+            state="disabled",
+            width=15,
+        )
+        save_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['save_btn'] = save_btn
+        
+        # 第二行
+        row2 = ttk.Frame(cmd_content)
+        row2.pack(fill="x", pady=1)
+        
+        read_btn = ttk.Button(
+            row2,
             text="Read Props",
             command=self.callbacks.get('read_properties', lambda: None),
             state="disabled",
-            width=12,
+            width=15,
         )
-        read_btn.pack(side="left", padx=2)
-        self.widgets['read_btn'] = read_btn
+        read_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['read_props_btn'] = read_btn
+        
+        resend_btn = ttk.Button(
+            row2,
+            text="Resend",
+            command=self.callbacks.get('resend_all_commands', lambda: None),
+            state="disabled",
+            width=15,
+        )
+        resend_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['resend_btn'] = resend_btn
+    
+    def _setup_coordinate_section(self):
+        """设置坐标模式控制区域"""
+        coord_frame = ttk.LabelFrame(self.parent, text="Coordinate Mode", style="Compact.TLabelframe")
+        coord_frame.pack(fill="x", pady=(0, 5))
+        
+        coord_content = ttk.Frame(coord_frame)
+        coord_content.pack(fill="x", padx=3, pady=2)
+        
+        coord_row = ttk.Frame(coord_content)
+        coord_row.pack(fill="x", pady=1)
+        
+        local_coord_btn = ttk.Button(
+            coord_row,
+            text="Local Coord (SS:2)",
+            command=self.callbacks.get('set_local_coordinate_mode', lambda: None),
+            state="disabled",
+            width=18,
+        )
+        local_coord_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['local_coord_btn'] = local_coord_btn
+        
+        global_coord_btn = ttk.Button(
+            coord_row,
+            text="Global Coord (SS:3)",
+            command=self.callbacks.get('set_global_coordinate_mode', lambda: None),
+            state="disabled",
+            width=18,
+        )
+        global_coord_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['global_coord_btn'] = global_coord_btn
     
     def _setup_activation_section(self):
         """设置激活区域"""
