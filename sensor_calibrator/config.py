@@ -12,6 +12,13 @@ class Config:
     """Main configuration container."""
     
     # =========================================================================
+    # Performance Optimization Switches
+    # =========================================================================
+    ENABLE_BLIT_OPTIMIZATION: Final[bool] = True      # Enable blit for faster rendering
+    ENABLE_WINDOW_MOVE_PAUSE: Final[bool] = True      # Pause updates during window move
+    ENABLE_DATA_DECIMATION: Final[bool] = True        # Enable data sampling for display
+    
+    # =========================================================================
     # Data Management
     # =========================================================================
     MAX_DATA_POINTS: Final[int] = 2000          # Maximum data points to retain
@@ -22,9 +29,11 @@ class Config:
     # =========================================================================
     # Timing (seconds)
     # =========================================================================
-    UPDATE_INTERVAL_MS: Final[int] = 50         # GUI update interval in milliseconds
-    CHART_UPDATE_INTERVAL: Final[float] = 0.05  # Chart refresh rate (20 FPS)
-    STATS_UPDATE_INTERVAL: Final[float] = 0.5   # Statistics update interval
+    UPDATE_INTERVAL_MS: Final[int] = 100        # GUI update interval in milliseconds (10 FPS)
+    CHART_UPDATE_INTERVAL: Final[float] = 0.1   # Chart refresh rate (10 FPS)
+    STATS_UPDATE_INTERVAL: Final[float] = 1.0   # Statistics update interval (1 FPS)
+    Y_LIMIT_UPDATE_INTERVAL: Final[float] = 0.5 # Y-axis limit update interval
+    WINDOW_MOVE_PAUSE_DELAY: Final[int] = 200   # ms to wait after window move before resuming
     
     # Serial timing
     SERIAL_TIMEOUT: Final[float] = 0.1          # Serial read timeout
@@ -79,6 +88,7 @@ class Config:
     CHART_TIME_WINDOW: Final[float] = 10.0      # Seconds to display on time charts
     CHART_Y_PADDING: Final[float] = 2.0         # Y-axis padding
     CHART_MIN_Y_RANGE: Final[float] = 1.0       # Minimum Y-axis range
+    CHART_DECIMATION_FACTOR: Final[int] = 2     # Data decimation factor for display
     
     # =========================================================================
     # File Paths

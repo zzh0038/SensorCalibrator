@@ -16,6 +16,7 @@ import secrets
 import re
 import matplotlib
 import atexit
+from collections import deque
 
 # Import configuration
 from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig
@@ -35,13 +36,13 @@ class StableSensorCalibrator:
         self.data_queue = queue.Queue(maxsize=Config.MAX_QUEUE_SIZE)
         self.update_interval = Config.UPDATE_INTERVAL_MS
 
-        # 数据存储
-        self.time_data = []
-        self.mpu_accel_data = [[], [], []]
-        self.mpu_gyro_data = [[], [], []]
-        self.adxl_accel_data = [[], [], []]
-        self.adxl_accel_data = [[], [], []]
-        self.gravity_mag_data = []
+        # 数据存储 - 使用deque优化内存管理
+        max_points = Config.MAX_DATA_POINTS
+        self.time_data = deque(maxlen=max_points)
+        self.mpu_accel_data = [deque(maxlen=max_points) for _ in range(3)]
+        self.mpu_gyro_data = [deque(maxlen=max_points) for _ in range(3)]
+        self.adxl_accel_data = [deque(maxlen=max_points) for _ in range(3)]
+        self.gravity_mag_data = deque(maxlen=max_points)
 
         # 时间跟踪
         self.data_start_time = None
@@ -124,9 +125,22 @@ class StableSensorCalibrator:
 
         # 新增：性能优化相关变量
         self.last_chart_update = 0
-        self.chart_update_interval = Config.CHART_UPDATE_INTERVAL  # 图表更新间隔（秒），限制为20 FPS
+        self.chart_update_interval = Config.CHART_UPDATE_INTERVAL  # 图表更新间隔（秒），限制为10 FPS
         self.last_stats_update = 0
         self.stats_update_interval = Config.STATS_UPDATE_INTERVAL   # 统计信息更新间隔（秒）
+        self.last_y_limit_update = 0
+        self.y_limit_update_interval = Config.Y_LIMIT_UPDATE_INTERVAL  # Y轴更新间隔
+        
+        # Blit优化相关变量
+        self._blit_backgrounds = None    # 缓存的背景
+        self._blit_axes = []             # 需要刷新的axes
+        self._blit_initialized = False   # 是否已初始化blit
+        
+        # 窗口移动检测相关变量
+        self._window_moving = False
+        self._window_move_timer = None
+        self._last_window_pos = None
+        self._window_configure_count = 0
 
         # 设置GUI
         self.setup_gui()
@@ -147,6 +161,11 @@ class StableSensorCalibrator:
         # 设置窗口关闭协议
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         atexit.register(self.cleanup)
+        
+        # 绑定窗口移动/调整大小事件（性能优化）
+        if Config.ENABLE_WINDOW_MOVE_PAUSE:
+            self.root.bind("<Configure>", self._on_window_configure)
+            self._last_window_pos = (self.root.winfo_x(), self.root.winfo_y())
 
         # 设置窗口图标
         try:
@@ -319,6 +338,48 @@ class StableSensorCalibrator:
             except:
                 pass
         self.after_tasks.clear()
+        
+        # 取消窗口移动定时器
+        if self._window_move_timer:
+            try:
+                self.root.after_cancel(self._window_move_timer)
+            except:
+                pass
+            self._window_move_timer = None
+
+    def _on_window_configure(self, event):
+        """窗口移动/调整大小事件处理 - 性能优化"""
+        if not hasattr(self, 'root') or not self.root:
+            return
+        
+        # 检查窗口位置是否改变
+        try:
+            current_pos = (self.root.winfo_x(), self.root.winfo_y())
+            if current_pos != self._last_window_pos:
+                self._last_window_pos = current_pos
+                self._window_moving = True
+                self._window_configure_count += 1
+                
+                # 取消之前的定时器
+                if self._window_move_timer:
+                    try:
+                        self.root.after_cancel(self._window_move_timer)
+                    except:
+                        pass
+                
+                # 设置新的定时器，延迟后恢复更新
+                self._window_move_timer = self.root.after(
+                    Config.WINDOW_MOVE_PAUSE_DELAY, 
+                    self._on_window_move_end
+                )
+        except:
+            pass
+    
+    def _on_window_move_end(self):
+        """窗口移动结束后的处理"""
+        self._window_moving = False
+        self._window_move_timer = None
+        self._window_configure_count = 0
 
     def stop_data_stream_safe(self):
         """安全停止数据流"""
@@ -362,15 +423,18 @@ class StableSensorCalibrator:
             except:
                 pass
 
-        # 清空数据缓冲区
+        # 清空数据缓冲区（支持deque）
         if hasattr(self, "time_data"):
             self.time_data.clear()
         if hasattr(self, "mpu_accel_data"):
-            self.mpu_accel_data = [[], [], []]
+            for d in self.mpu_accel_data:
+                d.clear()
         if hasattr(self, "mpu_gyro_data"):
-            self.mpu_gyro_data = [[], [], []]
+            for d in self.mpu_gyro_data:
+                d.clear()
         if hasattr(self, "adxl_accel_data"):
-            self.adxl_accel_data = [[], [], []]
+            for d in self.adxl_accel_data:
+                d.clear()
         if hasattr(self, "gravity_mag_data"):
             self.gravity_mag_data.clear()
 
@@ -1242,10 +1306,10 @@ class StableSensorCalibrator:
             if URL2:
                 self.URL2_var.set(URL2)
                 self.ota_params["URL2"] = URL2
-            if URL2:
+            if URL3:
                 self.URL3_var.set(URL3)
                 self.ota_params["URL3"] = URL3
-            if URL2:
+            if URL4:
                 self.URL4_var.set(URL4)
                 self.ota_params["URL4"] = URL4
             # 启用设置按钮
@@ -1922,15 +1986,22 @@ class StableSensorCalibrator:
         return None, None, None
 
     def clear_data(self):
-        """清空所有数据"""
+        """清空所有数据（支持deque）"""
         self.time_data.clear()
-        self.mpu_accel_data = [[], [], []]
-        self.mpu_gyro_data = [[], [], []]
-        self.adxl_accel_data = [[], [], []]
+        for d in self.mpu_accel_data:
+            d.clear()
+        for d in self.mpu_gyro_data:
+            d.clear()
+        for d in self.adxl_accel_data:
+            d.clear()
         self.gravity_mag_data.clear()
 
     def calculate_statistics(self, data_array, start_idx=None, end_idx=None):
-        """计算统计信息"""
+        """计算统计信息（支持deque和list）"""
+        # 处理deque类型
+        if isinstance(data_array, deque):
+            data_array = list(data_array)
+        
         if not data_array or len(data_array) == 0:
             return 0, 0
 
@@ -1948,9 +2019,9 @@ class StableSensorCalibrator:
         if len(segment) == 0:
             return 0, 0
 
-        # 计算均值和标准差
-        mean_val = np.mean(segment)
-        std_val = np.std(segment)
+        # 使用numpy向量化计算均值和标准差
+        mean_val = float(np.mean(segment))
+        std_val = float(np.std(segment))
 
         return mean_val, std_val
 
@@ -2354,9 +2425,17 @@ class StableSensorCalibrator:
         self.log_message("=" * 60)
 
     def update_gui(self):
-        """更新GUI - 主更新循环"""
+        """更新GUI - 主更新循环（性能优化版本）"""
         if self.exiting or not hasattr(self, "root") or not self.root:
             return
+        
+        # 性能优化：窗口移动期间跳过更新
+        if Config.ENABLE_WINDOW_MOVE_PAUSE and self._window_moving:
+            # 调度下一次更新
+            if not self.exiting and hasattr(self, "root"):
+                self.schedule_update_gui()
+            return
+        
         # 更新频率显示
         try:
             # 检查窗口是否仍然存在
@@ -2409,36 +2488,18 @@ class StableSensorCalibrator:
                                 + mpu_accel[2] ** 2
                             )
                             self.gravity_mag_data.append(gravity_mag)
-
-                            # 限制数据长度，但保留足够的数据显示
-                            max_data_points = Config.MAX_DATA_POINTS  # 数据点数量
-
-                            # 性能优化：批量切片，减少内存分配次数
-                            current_len = len(self.time_data)
-                            if current_len > max_data_points:
-                                # 只保留最近的数据
-                                keep_points = max_data_points
-                                start_idx = current_len - keep_points
-
-                                # 批量切片操作
-                                self.time_data = self.time_data[start_idx:]
-                                self.gravity_mag_data = self.gravity_mag_data[start_idx:]
-
-                                for i in range(3):
-                                    if len(self.mpu_accel_data[i]) > keep_points:
-                                        self.mpu_accel_data[i] = self.mpu_accel_data[i][start_idx:]
-                                    if len(self.mpu_gyro_data[i]) > keep_points:
-                                        self.mpu_gyro_data[i] = self.mpu_gyro_data[i][start_idx:]
-                                    if len(self.adxl_accel_data[i]) > keep_points:
-                                        self.adxl_accel_data[i] = self.adxl_accel_data[i][start_idx:]
+                            
+                            # 注意：deque 会自动处理长度限制，无需手动切片
                         processed_count += 1
 
                     except queue.Empty:
                         break
                     except Exception as e:
                         continue
-                # 更新统计信息
-                self.safe_update_statistics()
+                # 更新统计信息（带频率控制）
+                if current_time - self.last_stats_update >= self.stats_update_interval:
+                    self.safe_update_statistics()
+                    self.last_stats_update = current_time
 
                 if not self.exiting:
                     self.update_charts()
@@ -2564,8 +2625,50 @@ class StableSensorCalibrator:
         for key in sorted(self.stats_labels.keys()):
             self.log_message(f"  {key}")
 
+    def _init_blit(self):
+        """初始化blit优化 - 缓存静态背景"""
+        if not Config.ENABLE_BLIT_OPTIMIZATION or self._blit_initialized:
+            return
+        
+        try:
+            # 获取所有需要刷新的axes
+            self._blit_axes = []
+            for attr in ['ax1', 'ax2', 'ax3', 'ax4']:
+                if hasattr(self, attr):
+                    self._blit_axes.append(getattr(self, attr))
+            
+            # 获取所有需要刷新的artists（线条和文本）
+            self._blit_artists = []
+            if hasattr(self, 'mpu_accel_lines'):
+                self._blit_artists.extend(self.mpu_accel_lines)
+            if hasattr(self, 'adxl_accel_lines'):
+                self._blit_artists.extend(self.adxl_accel_lines)
+            if hasattr(self, 'mpu_gyro_lines'):
+                self._blit_artists.extend(self.mpu_gyro_lines)
+            if hasattr(self, 'gravity_line'):
+                self._blit_artists.append(self.gravity_line)
+            if hasattr(self, 'ax1_stats_text'):
+                self._blit_artists.append(self.ax1_stats_text)
+            if hasattr(self, 'ax2_stats_text'):
+                self._blit_artists.append(self.ax2_stats_text)
+            if hasattr(self, 'ax3_stats_text'):
+                self._blit_artists.append(self.ax3_stats_text)
+            if hasattr(self, 'ax4_stats_text'):
+                self._blit_artists.append(self.ax4_stats_text)
+            
+            # 缓存背景
+            self._blit_backgrounds = {}
+            for ax in self._blit_axes:
+                ax.figure.canvas.draw()
+                self._blit_backgrounds[ax] = ax.figure.canvas.copy_from_bbox(ax.bbox)
+            
+            self._blit_initialized = True
+        except Exception as e:
+            # blit初始化失败，回退到普通模式
+            self._blit_initialized = False
+    
     def update_charts(self):
-        """更新图表 - 安全版本"""
+        """更新图表 - 性能优化版本（支持blit）"""
         if (
             self.exiting
             or not hasattr(self, "time_data")
@@ -2573,58 +2676,87 @@ class StableSensorCalibrator:
             or len(self.time_data) < 2
         ):
             return
+        
+        # 频率控制
+        current_time = time.time()
+        if current_time - self.last_chart_update < self.chart_update_interval:
+            return
+        self.last_chart_update = current_time
 
         try:
+            # 初始化blit（第一次调用时）
+            if Config.ENABLE_BLIT_OPTIMIZATION and not self._blit_initialized:
+                self._init_blit()
+
             # 获取当前时间
-            current_time = self.time_data[-1] if self.time_data else 0
+            time_val = self.time_data[-1] if self.time_data else 0
 
             # 设置X轴范围，显示最近10秒的数据
             time_window = Config.CHART_TIME_WINDOW
-            x_min = max(0, current_time - time_window)
-            x_max = current_time
+            x_min = max(0, time_val - time_window)
+            x_max = time_val
+
+            # 转换deque为list用于绘图（使用切片获取最近数据）
+            time_list = list(self.time_data)
+            
+            # 数据降采样（可选优化）
+            if Config.ENABLE_DATA_DECIMATION and len(time_list) > Config.DISPLAY_DATA_POINTS * 2:
+                decimation = Config.CHART_DECIMATION_FACTOR
+                time_list = time_list[::decimation]
+                mpu_accel_list = [list(d)[::decimation] for d in self.mpu_accel_data]
+                mpu_gyro_list = [list(d)[::decimation] for d in self.mpu_gyro_data]
+                adxl_accel_list = [list(d)[::decimation] for d in self.adxl_accel_data]
+            else:
+                mpu_accel_list = [list(d) for d in self.mpu_accel_data]
+                mpu_gyro_list = [list(d) for d in self.mpu_gyro_data]
+                adxl_accel_list = [list(d) for d in self.adxl_accel_data]
 
             # 确保有足够的数据点
-            if len(self.time_data) > 1:
+            if len(time_list) > 1:
                 # 更新MPU6050加速度计图表
                 for i in range(3):
                     if (
-                        len(self.mpu_accel_data[i]) == len(self.time_data)
+                        len(mpu_accel_list[i]) == len(time_list)
                         and len(self.mpu_accel_lines) > i
                     ):
                         self.mpu_accel_lines[i].set_data(
-                            self.time_data, self.mpu_accel_data[i]
+                            time_list, mpu_accel_list[i]
                         )
 
                 # 更新ADXL355加速度计图表
                 for i in range(3):
                     if (
-                        len(self.adxl_accel_data[i]) == len(self.time_data)
+                        len(adxl_accel_list[i]) == len(time_list)
                         and len(self.adxl_accel_lines) > i
                     ):
                         self.adxl_accel_lines[i].set_data(
-                            self.time_data, self.adxl_accel_data[i]
+                            time_list, adxl_accel_list[i]
                         )
 
                 # 更新MPU6050陀螺仪图表
                 for i in range(3):
                     if (
-                        len(self.mpu_gyro_data[i]) == len(self.time_data)
+                        len(mpu_gyro_list[i]) == len(time_list)
                         and len(self.mpu_gyro_lines) > i
                     ):
                         self.mpu_gyro_lines[i].set_data(
-                            self.time_data, self.mpu_gyro_data[i]
+                            time_list, mpu_gyro_list[i]
                         )
 
                 # 更新重力矢量模长图表
-                if len(self.gravity_mag_data) == len(self.time_data) and hasattr(
+                gravity_list = list(self.gravity_mag_data)
+                if len(gravity_list) == len(self.time_data) and hasattr(
                     self, "gravity_line"
                 ):
-                    display_points = min(len(self.time_data), Config.DISPLAY_DATA_POINTS)
-                    start_idx = max(0, len(self.time_data) - display_points)
+                    display_points = min(len(time_list), Config.DISPLAY_DATA_POINTS)
+                    start_idx = max(0, len(time_list) - display_points)
                     sample_numbers = list(range(display_points))
-                    self.gravity_line.set_data(
-                        sample_numbers, self.gravity_mag_data[start_idx:]
-                    )
+                    if Config.ENABLE_DATA_DECIMATION and len(gravity_list) > Config.DISPLAY_DATA_POINTS * 2:
+                        gravity_display = list(self.gravity_mag_data)[::Config.CHART_DECIMATION_FACTOR][start_idx:]
+                    else:
+                        gravity_display = list(self.gravity_mag_data)[start_idx:]
+                    if len(gravity_display) == len(sample_numbers):
+                        self.gravity_line.set_data(sample_numbers, gravity_display)
                     if hasattr(self, "ax4"):
                         self.ax4.set_xlim(0, display_points)
 
@@ -2636,19 +2768,43 @@ class StableSensorCalibrator:
                 if hasattr(self, "ax3"):
                     self.ax3.set_xlim(x_min, x_max)
 
-                # 动态调整Y轴范围
-                self.adjust_y_limits()
+                # 动态调整Y轴范围（带频率控制）
+                if current_time - self.last_y_limit_update >= self.y_limit_update_interval:
+                    self.adjust_y_limits()
+                    self.last_y_limit_update = current_time
 
                 # 更新图表统计信息显示
                 self.update_chart_statistics()
 
-                # 重绘画布
+                # 使用blit或普通绘制
                 if hasattr(self, "canvas"):
-                    self.canvas.draw_idle()
+                    if Config.ENABLE_BLIT_OPTIMIZATION and self._blit_initialized:
+                        self._update_with_blit()
+                    else:
+                        self.canvas.draw_idle()
 
         except Exception as e:
             # 忽略绘图错误
             pass
+    
+    def _update_with_blit(self):
+        """使用blit技术高效更新图表"""
+        try:
+            # 恢复背景
+            for ax, bg in self._blit_backgrounds.items():
+                self.canvas.restore_region(bg)
+            
+            # 重绘变化的artists
+            for artist in self._blit_artists:
+                if hasattr(artist, 'axes') and artist.axes:
+                    artist.axes.draw_artist(artist)
+            
+            # 更新显示
+            self.canvas.blit(self.fig.bbox)
+            self.canvas.flush_events()
+        except Exception as e:
+            # blit失败，回退到普通绘制
+            self.canvas.draw_idle()
 
     def update_chart_statistics(self):
         """更新图表中的统计信息文本"""
@@ -2686,20 +2842,22 @@ class StableSensorCalibrator:
         self.ax4_stats_text.set_text(stats_text4)
 
     def adjust_y_limits(self):
-        """调整Y轴范围"""
+        """调整Y轴范围 - 优化版（使用numpy向量化计算）"""
         # MPU6050加速度计
         if self.mpu_accel_data[0] and len(self.mpu_accel_data[0]) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(self.mpu_accel_data[0]))
-            start_idx = max(0, len(self.mpu_accel_data[0]) - recent_points)
-
+            
+            # 使用list转换后计算（deque不支持直接slice）
             recent_data = []
             for i in range(3):
-                if len(self.mpu_accel_data[i]) >= start_idx + recent_points:
-                    recent_data.extend(self.mpu_accel_data[i][start_idx:])
+                data_list = list(self.mpu_accel_data[i])
+                if len(data_list) >= recent_points:
+                    recent_data.extend(data_list[-recent_points:])
 
             if recent_data:
-                y_min = min(recent_data) - Config.CHART_Y_PADDING
-                y_max = max(recent_data) + Config.CHART_Y_PADDING
+                # 使用numpy向量化计算
+                y_min = float(np.min(recent_data)) - Config.CHART_Y_PADDING
+                y_max = float(np.max(recent_data)) + Config.CHART_Y_PADDING
 
                 # 确保范围合理
                 if abs(y_max - y_min) < Config.CHART_MIN_Y_RANGE:
@@ -2711,16 +2869,16 @@ class StableSensorCalibrator:
         # ADXL355加速度计
         if self.adxl_accel_data[0] and len(self.adxl_accel_data[0]) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(self.adxl_accel_data[0]))
-            start_idx = max(0, len(self.adxl_accel_data[0]) - recent_points)
 
             recent_data = []
             for i in range(3):
-                if len(self.adxl_accel_data[i]) >= start_idx + recent_points:
-                    recent_data.extend(self.adxl_accel_data[i][start_idx:])
+                data_list = list(self.adxl_accel_data[i])
+                if len(data_list) >= recent_points:
+                    recent_data.extend(data_list[-recent_points:])
 
             if recent_data:
-                y_min = min(recent_data) - 2
-                y_max = max(recent_data) + 2
+                y_min = float(np.min(recent_data)) - 2
+                y_max = float(np.max(recent_data)) + 2
 
                 if abs(y_max - y_min) < 1:
                     y_min = -10
@@ -2731,16 +2889,16 @@ class StableSensorCalibrator:
         # MPU6050陀螺仪
         if self.mpu_gyro_data[0] and len(self.mpu_gyro_data[0]) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(self.mpu_gyro_data[0]))
-            start_idx = max(0, len(self.mpu_gyro_data[0]) - recent_points)
 
             recent_data = []
             for i in range(3):
-                if len(self.mpu_gyro_data[i]) >= start_idx + recent_points:
-                    recent_data.extend(self.mpu_gyro_data[i][start_idx:])
+                data_list = list(self.mpu_gyro_data[i])
+                if len(data_list) >= recent_points:
+                    recent_data.extend(data_list[-recent_points:])
 
             if recent_data:
-                y_min = min(recent_data) - 1
-                y_max = max(recent_data) + 1
+                y_min = float(np.min(recent_data)) - 1
+                y_max = float(np.max(recent_data)) + 1
 
                 if abs(y_max - y_min) < Config.CHART_MIN_Y_RANGE / 2:
                     y_min = -5
@@ -2751,13 +2909,11 @@ class StableSensorCalibrator:
         # 重力矢量模长
         if self.gravity_mag_data and len(self.gravity_mag_data) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(self.gravity_mag_data))
-            start_idx = max(0, len(self.gravity_mag_data) - recent_points)
-
-            recent_data = self.gravity_mag_data[start_idx:]
+            recent_data = list(self.gravity_mag_data)[-recent_points:]
 
             if recent_data:
-                y_min = max(0, min(recent_data) - Config.CHART_Y_PADDING)
-                y_max = max(recent_data) + Config.CHART_Y_PADDING
+                y_min = max(0, float(np.min(recent_data)) - Config.CHART_Y_PADDING)
+                y_max = float(np.max(recent_data)) + Config.CHART_Y_PADDING
 
                 if abs(y_max - y_min) < 1:
                     y_min = 0
@@ -3257,12 +3413,11 @@ class StableSensorCalibrator:
                             # 在主线程中显示属性
                             self.root.after(0, self.display_sensor_properties)
 
-                            if 1:
-                                self.root.after(0, self.extract_network_config)
+                            # 提取网络配置
+                            self.root.after(0, self.extract_network_config)
 
                             # 显示网络配置摘要
-                            if 1:
-                                self.root.after(0, self.display_network_summary)
+                            self.root.after(0, self.display_network_summary)
 
                             self.root.after(
                                 0,
