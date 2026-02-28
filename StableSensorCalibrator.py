@@ -19,7 +19,7 @@ import atexit
 from collections import deque
 
 # Import configuration
-from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager
+from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor
 
 matplotlib.use("TkAgg")
 
@@ -36,36 +36,20 @@ class StableSensorCalibrator:
         self.data_queue = queue.Queue(maxsize=Config.MAX_QUEUE_SIZE)
         self.update_interval = Config.UPDATE_INTERVAL_MS
 
-        # 数据存储 - 使用deque优化内存管理
-        max_points = Config.MAX_DATA_POINTS
-        self.time_data = deque(maxlen=max_points)
-        self.mpu_accel_data = [deque(maxlen=max_points) for _ in range(3)]
-        self.mpu_gyro_data = [deque(maxlen=max_points) for _ in range(3)]
-        self.adxl_accel_data = [deque(maxlen=max_points) for _ in range(3)]
-        self.gravity_mag_data = deque(maxlen=max_points)
-
-        # 时间跟踪
-        self.data_start_time = None
-        self.packet_count = 0
-        self.expected_frequency = 100
+        # 数据处理器（替代原有的数据存储）
+        self.data_processor = DataProcessor()
+        
+        # 保持向后兼容的引用
+        self._setup_data_references()
 
         # 统计数据
         self.serial_freq = 0
         self.last_freq_update = time.time()
         self.packets_received = 0
-
-        # 统计信息存储
+        
+        # 统计信息存储（从data_processor同步）
         self.stats_window_size = Config.STATS_WINDOW_SIZE
-        self.real_time_stats = {
-            "mpu_accel_mean": [0, 0, 0],
-            "mpu_accel_std": [0, 0, 0],
-            "adxl_accel_mean": [0, 0, 0],
-            "adxl_accel_std": [0, 0, 0],
-            "mpu_gyro_mean": [0, 0, 0],
-            "mpu_gyro_std": [0, 0, 0],
-            "gravity_mean": 0,
-            "gravity_std": 0,
-        }
+        self.real_time_stats = self.data_processor.get_statistics()
 
         # 传感器属性存储
         self.sensor_properties = {}
@@ -291,6 +275,20 @@ class StableSensorCalibrator:
 
         # 启动GUI更新循环
         self.schedule_update_gui()
+
+    def _setup_data_references(self):
+        """设置数据引用，保持与旧代码的兼容性"""
+        # 直接引用DataProcessor的数据缓冲区
+        self.time_data = self.data_processor.time_data
+        self.mpu_accel_data = self.data_processor.mpu_accel_data
+        self.mpu_gyro_data = self.data_processor.mpu_gyro_data
+        self.adxl_accel_data = self.data_processor.adxl_accel_data
+        self.gravity_mag_data = self.data_processor.gravity_mag_data
+        
+        # 时间跟踪
+        self.data_start_time = self.data_processor.data_start_time
+        self.packet_count = self.data_processor.packet_count
+        self.expected_frequency = self.data_processor.expected_frequency
 
     def _setup_ui_references(self):
         """设置UI引用，保持与旧代码的兼容性"""
@@ -1319,66 +1317,16 @@ class StableSensorCalibrator:
                 )
 
     def parse_sensor_data(self, data_string):
-        """解析传感器数据"""
-        try:
-            parts = data_string.split(",")
-            if len(parts) >= 9:
-                values = []
-                for part in parts[:9]:
-                    try:
-                        values.append(float(part.strip()))
-                    except:
-                        values.append(0.0)
-
-                mpu_accel = values[0:3]
-                mpu_gyro = values[3:6]
-                adxl_accel = values[6:9]
-
-                return mpu_accel, mpu_gyro, adxl_accel
-        except:
-            pass
-
-        return None, None, None
+        """解析传感器数据 - 委托给 DataProcessor"""
+        return self.data_processor.parse_sensor_data(data_string)
 
     def clear_data(self):
-        """清空所有数据（支持deque）"""
-        self.time_data.clear()
-        for d in self.mpu_accel_data:
-            d.clear()
-        for d in self.mpu_gyro_data:
-            d.clear()
-        for d in self.adxl_accel_data:
-            d.clear()
-        self.gravity_mag_data.clear()
+        """清空所有数据 - 委托给 DataProcessor"""
+        self.data_processor.clear_all()
 
     def calculate_statistics(self, data_array, start_idx=None, end_idx=None):
-        """计算统计信息（支持deque和list）"""
-        # 处理deque类型
-        if isinstance(data_array, deque):
-            data_array = list(data_array)
-        
-        if not data_array or len(data_array) == 0:
-            return 0, 0
-
-        if start_idx is None:
-            start_idx = 0
-        if end_idx is None:
-            end_idx = len(data_array)
-
-        # 获取数据片段
-        if len(data_array) >= end_idx:
-            segment = data_array[start_idx:end_idx]
-        else:
-            segment = data_array[start_idx:]
-
-        if len(segment) == 0:
-            return 0, 0
-
-        # 使用numpy向量化计算均值和标准差
-        mean_val = float(np.mean(segment))
-        std_val = float(np.std(segment))
-
-        return mean_val, std_val
+        """计算统计信息 - 委托给 DataProcessor"""
+        return self.data_processor.calculate_statistics(data_array, start_idx, end_idx)
 
     def generate_key_from_mac(self, mac_address):
         """
@@ -1868,91 +1816,63 @@ class StableSensorCalibrator:
                 self.log_message(f"GUI update error: {str(e)}")
 
     def update_statistics(self):
-        """更新统计信息 - 修复键名访问"""
-        if len(self.time_data) < 10:  # 至少有10个数据点
+        """更新统计信息 - 委托给 DataProcessor"""
+        if not self.data_processor.has_data():
             return
-
-        # 计算最近数据的统计信息
-        window_size = min(self.stats_window_size, len(self.time_data))
-        start_idx = len(self.time_data) - window_size
-
-        # 定义传感器键名映射
-        sensor_key_map = {
-            "mpu_accel": "mpu_accel",
-            "adxl_accel": "adxl_accel",
-            "mpu_gyro": "mpu_gyro",
-        }
-
+        
+        # 更新统计数据
+        self.data_processor.update_statistics()
+        
+        # 同步到本地引用
+        self.real_time_stats = self.data_processor.get_statistics()
+        
+        # 更新UI显示
         axis_names = ["x", "y", "z"]
-
+        
         # 更新MPU6050加速度计统计
         for i in range(3):
-            if len(self.mpu_accel_data[i]) >= window_size:
-                mean_val, std_val = self.calculate_statistics(
-                    self.mpu_accel_data[i], start_idx
-                )
-                self.real_time_stats["mpu_accel_mean"][i] = mean_val
-                self.real_time_stats["mpu_accel_std"][i] = std_val
-
-                # 使用统一的键名
-                sensor_key = "mpu_accel"
-                mean_key = f"{sensor_key}_{axis_names[i]}_mean"
-                std_key = f"{sensor_key}_{axis_names[i]}_std"
-
-                # 安全访问，避免KeyError
-                if mean_key in self.stats_labels:
-                    self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
-                if std_key in self.stats_labels:
-                    self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
-
+            mean_val = self.real_time_stats["mpu_accel_mean"][i]
+            std_val = self.real_time_stats["mpu_accel_std"][i]
+            mean_key = f"mpu_accel_{axis_names[i]}_mean"
+            std_key = f"mpu_accel_{axis_names[i]}_std"
+            
+            if mean_key in self.stats_labels:
+                self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
+            if std_key in self.stats_labels:
+                self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
+        
         # 更新ADXL355加速度计统计
         for i in range(3):
-            if len(self.adxl_accel_data[i]) >= window_size:
-                mean_val, std_val = self.calculate_statistics(
-                    self.adxl_accel_data[i], start_idx
-                )
-                self.real_time_stats["adxl_accel_mean"][i] = mean_val
-                self.real_time_stats["adxl_accel_std"][i] = std_val
-
-                sensor_key = "adxl_accel"
-                mean_key = f"{sensor_key}_{axis_names[i]}_mean"
-                std_key = f"{sensor_key}_{axis_names[i]}_std"
-
-                if mean_key in self.stats_labels:
-                    self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
-                if std_key in self.stats_labels:
-                    self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
-
+            mean_val = self.real_time_stats["adxl_accel_mean"][i]
+            std_val = self.real_time_stats["adxl_accel_std"][i]
+            mean_key = f"adxl_accel_{axis_names[i]}_mean"
+            std_key = f"adxl_accel_{axis_names[i]}_std"
+            
+            if mean_key in self.stats_labels:
+                self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
+            if std_key in self.stats_labels:
+                self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
+        
         # 更新MPU6050陀螺仪统计
         for i in range(3):
-            if len(self.mpu_gyro_data[i]) >= window_size:
-                mean_val, std_val = self.calculate_statistics(
-                    self.mpu_gyro_data[i], start_idx
-                )
-                self.real_time_stats["mpu_gyro_mean"][i] = mean_val
-                self.real_time_stats["mpu_gyro_std"][i] = std_val
-
-                sensor_key = "mpu_gyro"
-                mean_key = f"{sensor_key}_{axis_names[i]}_mean"
-                std_key = f"{sensor_key}_{axis_names[i]}_std"
-
-                if mean_key in self.stats_labels:
-                    self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
-                if std_key in self.stats_labels:
-                    self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
-
+            mean_val = self.real_time_stats["mpu_gyro_mean"][i]
+            std_val = self.real_time_stats["mpu_gyro_std"][i]
+            mean_key = f"mpu_gyro_{axis_names[i]}_mean"
+            std_key = f"mpu_gyro_{axis_names[i]}_std"
+            
+            if mean_key in self.stats_labels:
+                self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
+            if std_key in self.stats_labels:
+                self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
+        
         # 更新重力矢量统计
-        if len(self.gravity_mag_data) >= window_size:
-            mean_val, std_val = self.calculate_statistics(
-                self.gravity_mag_data, start_idx
-            )
-            self.real_time_stats["gravity_mean"] = mean_val
-            self.real_time_stats["gravity_std"] = std_val
-
-            if "gravity_mean" in self.stats_labels:
-                self.stats_labels["gravity_mean"].set(f"Mean: {mean_val:6.3f}")
-            if "gravity_std" in self.stats_labels:
-                self.stats_labels["gravity_std"].set(f"Std: {std_val:6.3f}")
+        mean_val = self.real_time_stats["gravity_mean"]
+        std_val = self.real_time_stats["gravity_std"]
+        
+        if "gravity_mean" in self.stats_labels:
+            self.stats_labels["gravity_mean"].set(f"Mean: {mean_val:6.3f}")
+        if "gravity_std" in self.stats_labels:
+            self.stats_labels["gravity_std"].set(f"Std: {std_val:6.3f}")
 
     def safe_update_statistics(self):
         """安全的统计信息更新 - 带错误处理"""
@@ -1981,24 +1901,16 @@ class StableSensorCalibrator:
             self.log_message(f"  {key}")
 
     def update_charts(self):
-        """更新图表 - 使用ChartManager"""
+        """更新图表 - 使用ChartManager和DataProcessor"""
         if (
             self.exiting
             or not self.chart_manager
-            or not hasattr(self, "time_data")
-            or not self.time_data
-            or len(self.time_data) < 2
+            or not self.data_processor.has_data()
         ):
             return
         
-        # 准备数据字典
-        data_dict = {
-            'time': list(self.time_data),
-            'mpu_accel': [list(d) for d in self.mpu_accel_data],
-            'adxl_accel': [list(d) for d in self.adxl_accel_data],
-            'mpu_gyro': [list(d) for d in self.mpu_gyro_data],
-            'gravity': list(self.gravity_mag_data),
-        }
+        # 从DataProcessor获取显示数据
+        data_dict = self.data_processor.get_display_data()
         
         # 使用ChartManager更新图表
         updated = self.chart_manager.update_charts(data_dict)
@@ -2012,16 +1924,17 @@ class StableSensorCalibrator:
         if not self.chart_manager:
             return
         
+        stats = self.data_processor.get_statistics()
         stats_dict = {
             'window_size': self.stats_window_size,
-            'mpu_accel_mean': self.real_time_stats['mpu_accel_mean'],
-            'mpu_accel_std': self.real_time_stats['mpu_accel_std'],
-            'adxl_accel_mean': self.real_time_stats['adxl_accel_mean'],
-            'adxl_accel_std': self.real_time_stats['adxl_accel_std'],
-            'mpu_gyro_mean': self.real_time_stats['mpu_gyro_mean'],
-            'mpu_gyro_std': self.real_time_stats['mpu_gyro_std'],
-            'gravity_mean': self.real_time_stats['gravity_mean'],
-            'gravity_std': self.real_time_stats['gravity_std'],
+            'mpu_accel_mean': stats['mpu_accel_mean'],
+            'mpu_accel_std': stats['mpu_accel_std'],
+            'adxl_accel_mean': stats['adxl_accel_mean'],
+            'adxl_accel_std': stats['adxl_accel_std'],
+            'mpu_gyro_mean': stats['mpu_gyro_mean'],
+            'mpu_gyro_std': stats['mpu_gyro_std'],
+            'gravity_mean': stats['gravity_mean'],
+            'gravity_std': stats['gravity_std'],
         }
         self.chart_manager.update_statistics_text(stats_dict)
 

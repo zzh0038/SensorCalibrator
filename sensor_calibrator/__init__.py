@@ -19,6 +19,7 @@ from .config import (
 from .data_buffer import SensorDataBuffer
 from .chart_manager import ChartManager
 from .ui_manager import UIManager
+from .data_processor import DataProcessor
 
 __all__ = [
     'Config',
@@ -28,6 +29,7 @@ __all__ = [
     'SensorDataBuffer',
     'ChartManager',
     'UIManager',
+    'DataProcessor',
     'MAX_DATA_POINTS',
     'DISPLAY_DATA_POINTS',
     'STATS_WINDOW_SIZE',
