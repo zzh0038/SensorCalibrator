@@ -479,8 +479,8 @@ class ChartManager:
                     recent_data.extend(adxl_accel[i][-recent_points:])
             
             if recent_data:
-                y_min = float(np.min(recent_data)) - 2
-                y_max = float(np.max(recent_data)) + 2
+                y_min = float(np.min(recent_data)) - Config.CHART_Y_PADDING
+                y_max = float(np.max(recent_data)) + Config.CHART_Y_PADDING
                 
                 if abs(y_max - y_min) < 1:
                     y_min = -10
@@ -499,8 +499,8 @@ class ChartManager:
                     recent_data.extend(mpu_gyro[i][-recent_points:])
             
             if recent_data:
-                y_min = float(np.min(recent_data)) - 1
-                y_max = float(np.max(recent_data)) + 1
+                y_min = float(np.min(recent_data)) - Config.CHART_MIN_Y_RANGE / 2
+                y_max = float(np.max(recent_data)) + Config.CHART_MIN_Y_RANGE / 2
                 
                 if abs(y_max - y_min) < Config.CHART_MIN_Y_RANGE / 2:
                     y_min = -5

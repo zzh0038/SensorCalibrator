@@ -222,8 +222,8 @@ class StableSensorCalibrator:
             'read_wifi_config': self.read_wifi_config,
             'set_mqtt_config': self.set_mqtt_config,
             'read_mqtt_config': self.read_mqtt_config,
-            'set_OTA_config': self.set_OTA_config,
-            'read_OTA_config': self.read_OTA_config,
+            'set_ota_config': self.set_ota_config,
+            'read_ota_config': self.read_ota_config,
         }
         self.ui_manager = UIManager(scrollable_frame, self.ui_callbacks)
         
@@ -320,7 +320,6 @@ class StableSensorCalibrator:
         # 命令相关
         self.send_btn = self.ui_manager.get_widget('send_btn')
         self.save_btn = self.ui_manager.get_widget('save_btn')
-        self.read_btn = self.ui_manager.get_widget('read_btn')
         self.read_props_btn = self.ui_manager.get_widget('read_props_btn')
         self.resend_btn = self.ui_manager.get_widget('resend_btn')
         
@@ -563,8 +562,8 @@ class StableSensorCalibrator:
             target=self.send_config_command, args=(wifi_cmd, "WiFi"), daemon=True
         ).start()
 
-    def set_OTA_config(self):
-        """设置MQTT配置"""
+    def set_ota_config(self):
+        """设置OTA配置"""
         if not self.ser or not self.ser.is_open:
             self.log_message("Error: Not connected to serial port!")
             return
@@ -704,8 +703,8 @@ class StableSensorCalibrator:
         self.log_message("Reading MQTT configuration from device...")
         self.read_sensor_properties()
 
-    def read_OTA_config(self):
-        """读取MQTT配置"""
+    def read_ota_config(self):
+        """读取OTA配置"""
         self.log_message("Reading MQTT configuration from device...")
         self.read_sensor_properties()
 
@@ -856,10 +855,10 @@ class StableSensorCalibrator:
             self.set_mqtt_btn.config(state="normal")
         if hasattr(self, "read_mqtt_btn"):
             self.read_mqtt_btn.config(state="normal")
-        if hasattr(self, "set_OTA_btn"):
-            self.set_OTA_btn.config(state="normal")
-        if hasattr(self, "read_OTA_btn"):
-            self.read_OTA_btn.config(state="normal")
+        if hasattr(self, "set_ota_btn"):
+            self.set_ota_btn.config(state="normal")
+        if hasattr(self, "read_ota_btn"):
+            self.read_ota_btn.config(state="normal")
         if hasattr(self, "local_coord_btn"):
             self.local_coord_btn.config(state="normal")
         if hasattr(self, "global_coord_btn"):

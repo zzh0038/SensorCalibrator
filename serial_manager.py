@@ -139,13 +139,13 @@ class SerialManager:
         if not self.is_open:
             raise RuntimeError("SerialManager: Port is not open")
 
+        import queue  # 局部导入避免顶层依赖
+
         all_lines: List[str] = []
         line_queue: "queue.Queue[str]" = queue.Queue()
 
         def _listener(line: str) -> None:
             line_queue.put(line)
-
-        import queue  # 局部导入避免顶层依赖
 
         # 清空输入缓冲区，避免旧数据干扰
         self.reset_input_buffer()

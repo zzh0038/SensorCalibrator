@@ -1,694 +1,259 @@
-# Plan: SensorCalibrator Code Review Fixes
+# Plan: Code Review Fixes
 
-**Generated**: 2026-02-27  
-**Estimated Complexity**: Medium  
-**Estimated Duration**: 2-3 weeks (part-time)  
-**Priority**: P0 bugs must be fixed immediately
-
----
+**Generated**: 2026-03-02
+**Estimated Complexity**: Low
 
 ## Overview
-
-This plan addresses all issues identified in the comprehensive code review of the SensorCalibrator project. The fixes are organized by priority into 4 sprints, building from critical bug fixes to long-term maintainability improvements.
-
-### Issues Summary
-
-| Priority | Count | Issues |
-|----------|-------|--------|
-| 🔴 P0 - Critical | 1 | URL3/URL4 assignment bug (functional error) |
-| 🟡 P1 - Important | 5 | Dead code, error handling, tests, duplication |
-| 🟢 P2 - Improvement | 8 | Type hints, formatting, documentation |
-
-### Approach
-
-1. **Sprint 1**: Fix critical bugs that affect functionality
-2. **Sprint 2**: Clean up code quality issues
-3. **Sprint 3**: Establish testing infrastructure
-4. **Sprint 4**: Type safety and documentation
-
----
+根据 Code Review 发现的问题，修复代码中的错误、不一致性和潜在 bug。主要涉及：
+1. 修复属性名大小写不匹配问题（高优先级）
+2. 修复不存在的控件引用（高优先级）
+3. 修正错误注释和命名
+4. 统一代码风格
 
 ## Prerequisites
-
-- [ ] Git branch created: `fix/code-review-issues`
-- [ ] Backup of current `main` branch
-- [ ] Python 3.8+ environment
-- [ ] Basic testing hardware (optional, for manual testing)
+- 现有测试套件通过
+- Python 环境已配置
+- 代码备份或版本控制
 
 ---
 
-## Sprint 1: Critical Bug Fixes (P0)
+## Sprint 1: 修复高优先级 Bug
+**Goal**: 修复会导致功能失效的属性名错误和控件引用错误
+**Demo/Validation**:
+- 运行测试套件确保全部通过
+- 验证 OTA 配置按钮状态可以正常切换
+- 验证串口断开时按钮状态正确更新
 
-**Goal**: Fix the functional bug affecting URL3/URL4 configuration  
-**Duration**: 1 day  
-**Risk**: Low
-
-### Task 1.1: Fix URL Assignment Bug
-
-- **Location**: `StableSensorCalibrator.py`, lines 1245-1249
+### Task 1.1: 修复 `set_OTA_btn` 属性名大小写不匹配
+- **Location**: `StableSensorCalibrator.py`
 - **Description**: 
-  - Fix the condition variable in `extract_network_config()` method
-  - Lines 1245 and 1248 incorrectly check `if URL2:` instead of `URL3` and `URL4`
-- **Current Code**:
-  ```python
-  if URL2:  # BUG: should be URL3
-      self.URL3_var.set(URL3)
-      self.ota_params["URL3"] = URL3
-  if URL2:  # BUG: should be URL4
-      self.URL4_var.set(URL4)
-      self.ota_params["URL4"] = URL4
-  ```
-- **Fixed Code**:
-  ```python
-  if URL3:
-      self.URL3_var.set(URL3)
-      self.ota_params["URL3"] = URL3
-  if URL4:
-      self.URL4_var.set(URL4)
-      self.ota_params["URL4"] = URL4
-  ```
-- **Dependencies**: None
+  - UIManager 中定义的是 `set_ota_btn`（小写）
+  - StableSensorCalibrator 中使用的是 `set_OTA_btn`（大写）
+  - 需要统一为小写 `set_ota_btn`
+- **Dependencies**: 无
 - **Acceptance Criteria**:
-  - [ ] URL3 assignment checks `URL3` variable
-  - [ ] URL4 assignment checks `URL4` variable
-  - [ ] Code review by second person
+  - 所有 `set_OTA_btn` 引用改为 `set_ota_btn`
+  - `read_OTA_btn` 引用改为 `read_ota_btn`
 - **Validation**:
-  - [ ] Manual test: Set OTA config with different URLs, verify all 4 are saved correctly
-  - [ ] Check `sensor_properties.json` output
+  - 搜索确认没有大写引用残留
+  - 运行测试 `python tests/test_integration.py`
 
-### Task 1.2: Remove Duplicate Initialization
+**具体修改位置**：
+1. Line ~350: `self.set_OTA_btn` → `self.set_ota_btn`
+2. Line ~354: `self.set_OTA_btn` → `self.set_ota_btn`
+3. Line ~859: `set_OTA_btn` → `set_ota_btn`
+4. Line ~861: `set_OTA_btn` → `set_ota_btn`
+5. Line ~860: `read_OTA_btn` → `read_ota_btn`
+6. Line ~862: `read_OTA_btn` → `read_ota_btn`
 
-- **Location**: `StableSensorCalibrator.py`, lines 42-43
-- **Description**: Remove duplicate `adxl_accel_data` initialization
-- **Current Code**:
-  ```python
-  self.adxl_accel_data = [[], [], []]  # line 42
-  self.adxl_accel_data = [[], [], []]  # line 43 - DUPLICATE
-  ```
-- **Fix**: Delete line 43
-- **Dependencies**: None
-- **Acceptance Criteria**:
-  - [ ] Only one initialization line remains
-  - [ ] Application starts without errors
-- **Validation**:
-  - [ ] Run application, verify no AttributeError
-
-### Task 1.3: Remove Dead Code (if 1:)
-
-- **Location**: `StableSensorCalibrator.py`, lines 3260, 3264
-- **Description**: Replace `if 1:` with proper conditional logic or remove
-- **Analysis**:
-  - Line 3260: `extract_network_config()` - should always run after properties read
-  - Line 3264: `display_network_summary()` - should always run after properties read
-- **Fix**: Remove `if 1:` wrappers, keep the calls
-- **Dependencies**: None
-- **Acceptance Criteria**:
-  - [ ] No `if 1:` statements remain in codebase
-  - [ ] Functionality unchanged
-- **Validation**:
-  - [ ] Search codebase for `if 1:` pattern - should return 0 results
-  - [ ] Manual test: Read sensor properties, verify network config extracts and displays
-
-### Sprint 1 Demo/Validation
-
-- [ ] All P0 bugs fixed
-- [ ] Application runs without errors
-- [ ] OTA URL configuration works correctly for all 4 URLs
-- [ ] Code review completed
-
----
-
-## Sprint 2: Code Quality Fixes (P1)
-
-**Goal**: Improve error handling, remove duplication, add basic linting  
-**Duration**: 3-5 days  
-**Risk**: Low
-
-### Task 2.1: Refine Exception Handling
-
-- **Location**: Multiple files, especially `StableSensorCalibrator.py`
-- **Description**: Replace bare `except Exception:` with specific exceptions
-- **Priority Files**:
-  - `StableSensorCalibrator.py`: `read_serial_data()`, `send_config_command()`, `activate_sensor_thread()`
-  - `serial_manager.py`: `open()`, `_read_loop()`
-- **Pattern Changes**:
-  ```python
-  # BEFORE
-  try:
-      self.ser.write(cmd)
-  except Exception as e:
-      self.log_message(f"Error: {e}")
-  
-  # AFTER
-  try:
-      self.ser.write(cmd)
-  except serial.SerialException as e:
-      self.log_message(f"Serial error: {e}")
-  except UnicodeEncodeError as e:
-      self.log_message(f"Encoding error: {e}")
-  ```
-- **Dependencies**: None
-- **Acceptance Criteria**:
-  - [ ] No bare `except:` or `except Exception:` without comment
-  - [ ] Specific exceptions caught where possible
-  - [ ] All exception handlers log meaningful messages
-- **Validation**:
-  - [ ] `grep -n "except Exception" StableSensorCalibrator.py` - only justified cases remain
-  - [ ] Run application, verify error handling still works
-
-### Task 2.2: Extract Duplicate Config Command Logic
-
+### Task 1.2: 修复 `read_btn` 引用错误
 - **Location**: `StableSensorCalibrator.py`
-- **Description**: Create generic method for WiFi/MQTT/OTA config commands
-- **Methods to Refactor**:
-  - `set_wifi_config()`
-  - `set_mqtt_config()`
-  - `set_OTA_config()`
-- **New Method**:
-  ```python
-  def _send_configuration_command(
-      self, 
-      command: str, 
-      config_name: str, 
-      validator: Optional[Callable] = None
-  ) -> None:
-      """Generic method to send configuration commands."""
-      # Common validation
-      if not self.ser or not self.ser.is_open:
-          self.log_message(f"Error: Not connected to serial port!")
-          return
-      
-      if validator and not validator():
-          return
-      
-      # Stop data stream if running
-      # Send command
-      # Handle response
-      # Restore data stream
-  ```
-- **Dependencies**: None
+- **Description**: 
+  - `_setup_ui_references()` 中引用了 `read_btn`
+  - 但 UIManager 中定义的是 `read_props_btn`
+  - 需要统一为 `read_props_btn`
+- **Dependencies**: 无
 - **Acceptance Criteria**:
-  - [ ] New generic method created
-  - [ ] `set_wifi_config()`, `set_mqtt_config()`, `set_OTA_config()` refactored to use it
-  - [ ] No code duplication between the three methods
-  - [ ] All original functionality preserved
+  - 将 `self.read_btn` 改为 `self.read_props_btn`
 - **Validation**:
-  - [ ] Unit test: Mock serial connection, verify commands sent correctly
-  - [ ] Manual test: All three config types work
+  - 确认没有 `read_btn` 引用残留
+  - 运行测试
 
-### Task 2.3: Add Magic Number Constants
+**具体修改位置**：
+- Line ~323: `self.read_btn = self.ui_manager.get_widget('read_btn')` → `self.read_props_btn`
 
-- **Location**: `StableSensorCalibrator.py` and `sensor_calibrator/config.py`
-- **Description**: Extract magic numbers to Config class
-- **Numbers to Extract**:
-  | Line | Current Value | Context | Config Name |
-  |------|---------------|---------|-------------|
-  | ~1047 | `2.0` | Command response wait | `COMMAND_RESPONSE_WAIT` |
-  | ~1052 | `5.0` | Read response timeout | `READ_RESPONSE_TIMEOUT` |
-  | ~2100 | `2.0` | Activation wait | `ACTIVATION_WAIT_TIME` |
-  | ~2105 | `5.0` | Activation timeout | `ACTIVATION_TIMEOUT` |
-  | ~2841 | `10` | Data collection timeout | `CALIBRATION_TIMEOUT` |
-  | ~2841 | `10` | Minimum sample ratio | `MIN_SAMPLE_RATIO` |
-- **Dependencies**: None
-- **Acceptance Criteria**:
-  - [ ] All identified magic numbers moved to `Config` class
-  - [ ] Original values used as defaults
-  - [ ] Comments explain each constant
-- **Validation**:
-  - [ ] `grep -n "time.sleep(2\|5\|10)" StableSensorCalibrator.py` - only Config references
-  - [ ] Application behavior unchanged
-
-### Task 2.4: Fix Comment Typos and Inconsistencies
-
+### Task 1.3: 修复 `disconnect_serial` 中引用问题
 - **Location**: `StableSensorCalibrator.py`
-- **Description**: Fix misleading comments
-- **Issues Found**:
-  - Line 1113: `read_OTA_config()` docstring says "读取MQTT配置" should be "读取OTA配置"
-  - Line 984: Log message says "Setting OTA" but uses wrong variable format
-- **Dependencies**: None
+- **Description**: 
+  - `disconnect_serial` 方法引用了 `self.read_btn`，应该是 `self.read_props_btn`
+- **Dependencies**: Task 1.2
 - **Acceptance Criteria**:
-  - [ ] All docstrings match method functionality
-  - [ ] All comments in correct language (Chinese for this project)
+  - 修复引用错误
 - **Validation**:
-  - [ ] Review all docstrings in modified methods
-
-### Sprint 2 Demo/Validation
-
-- [ ] Code duplication reduced by 50%+
-- [ ] No bare exception handlers remain
-- [ ] All magic numbers configurable
-- [ ] Application runs with identical behavior
+  - 代码审查确认
 
 ---
 
-## Sprint 3: Testing Infrastructure (P1)
+## Sprint 2: 修正注释和文档
+**Goal**: 修复错误的注释和文档字符串
+**Demo/Validation**:
+- 代码审查确认注释与功能匹配
 
-**Goal**: Add unit tests and integration tests  
-**Duration**: 1 week  
-**Risk**: Medium
-
-### Task 3.1: Setup Testing Framework
-
-- **Location**: New `tests/` directory
-- **Description**: Initialize pytest testing structure
-- **Files to Create**:
-  ```
-  tests/
-  ├── __init__.py
-  ├── conftest.py          # Shared fixtures
-  ├── test_activation.py   # Tests for activation.py
-  ├── test_calibration.py  # Tests for calibration.py
-  ├── test_config.py       # Tests for config.py
-  ├── test_data_buffer.py  # Tests for data_buffer.py
-  └── test_network_config.py  # Tests for network_config.py
-  ```
-- **Dependencies**: None
+### Task 2.1: 修正 `set_OTA_config` 方法的文档字符串
+- **Location**: `StableSensorCalibrator.py` Line ~566
+- **Description**: 
+  - 当前注释是 `"""设置MQTT配置"""`
+  - 应该改为 `"""设置OTA配置"""`
+- **Dependencies**: 无
 - **Acceptance Criteria**:
-  - [ ] pytest installed and configured
-  - [ ] `pytest` command runs successfully (even if no tests yet)
-  - [ ] Test configuration in `pyproject.toml` or `setup.cfg`
+  - 文档字符串与功能匹配
 - **Validation**:
-  - [ ] `pytest --version` works
-  - [ ] `pytest tests/` runs without errors
+  - 代码审查
 
-### Task 3.2: Write Tests for activation.py
-
-- **Location**: `tests/test_activation.py`
-- **Description**: Unit tests for activation module functions
-- **Test Cases**:
-  ```python
-  # test_generate_key_from_mac
-  - Valid MAC address produces 64-char hex string
-  - Different MACs produce different keys
-  - Invalid MAC raises ValueError
-  
-  # test_verify_key
-  - Correct key returns True
-  - Incorrect key returns False
-  - Case insensitive comparison
-  
-  # test_validate_mac_address
-  - Valid formats (colon, hyphen, lowercase, uppercase)
-  - Invalid formats (too short, wrong chars, empty)
-  
-  # test_extract_mac_from_properties
-  - Extract from various field names
-  - Extract from DN field with regex
-  - Return None when not found
-  
-  # test_check_activation_status
-  - Valid activation returns True
-  - Invalid activation returns False
-  - Missing properties returns False
-  ```
-- **Dependencies**: Task 3.1
+### Task 2.2: 统一方法命名风格
+- **Location**: `StableSensorCalibrator.py`
+- **Description**: 
+  - `set_OTA_config` 应该改为 `set_ota_config`（小写）
+  - `read_OTA_config` 应该改为 `read_ota_config`（小写）
+  - 同步更新所有调用点
+- **Dependencies**: Sprint 1 完成
 - **Acceptance Criteria**:
-  - [ ] All functions have test coverage
-  - [ ] Edge cases covered
-  - [ ] Tests pass
+  - 方法名符合 Python 命名规范（snake_case，全小写）
+  - 所有调用点已更新
 - **Validation**:
-  - [ ] `pytest tests/test_activation.py -v` passes
-  - [ ] Coverage report shows 100% for activation.py
+  - 运行测试
+  - 搜索确认没有大写方法名残留
 
-### Task 3.3: Write Tests for calibration.py
-
-- **Location**: `tests/test_calibration.py`
-- **Description**: Unit tests for calibration algorithms
-- **Test Cases**:
-  ```python
-  # test_compute_six_position_calibration
-  - Valid 6-position data returns correct scales/offsets
-  - Wrong number of positions raises ValueError
-  - Zero or negative gravity raises ValueError
-  - Very small delta uses default scale (1.0)
-  
-  # test_compute_gyro_offset
-  - Valid samples returns mean offset
-  - Empty samples returns [0, 0, 0]
-  - Wrong shape raises ValueError
-  ```
-- **Dependencies**: Task 3.1
-- **Acceptance Criteria**:
-  - [ ] Calibration math verified with known inputs/outputs
-  - [ ] Edge cases (zero samples, wrong shape) tested
-- **Validation**:
-  - [ ] `pytest tests/test_calibration.py -v` passes
-  - [ ] Mathematical correctness verified
-
-### Task 3.4: Write Tests for data_buffer.py
-
-- **Location**: `tests/test_data_buffer.py`
-- **Description**: Unit tests for SensorDataBuffer
-- **Test Cases**:
-  ```python
-  # test_add_sample
-  - Single sample adds correctly
-  - Multiple samples maintain order
-  - Thread safety (concurrent adds)
-  
-  # test_size_limit
-  - Buffer respects max_points limit
-  - Oldest data evicted first
-  
-  # test_statistics
-  - Mean calculation correct
-  - Std calculation correct
-  - Empty buffer returns zeros
-  
-  # test_clear
-  - All data cleared
-  - Statistics reset
-  ```
-- **Dependencies**: Task 3.1
-- **Acceptance Criteria**:
-  - [ ] Thread safety tested
-  - [ ] Size limiting verified
-  - [ ] Statistics accuracy verified
-- **Validation**:
-  - [ ] `pytest tests/test_data_buffer.py -v` passes
-
-### Task 3.5: Write Tests for network_config.py
-
-- **Location**: `tests/test_network_config.py`
-- **Description**: Unit tests for network command builders
-- **Test Cases**:
-  ```python
-  # test_build_wifi_command
-  - Valid SSID/password returns command
-  - Empty SSID returns error
-  - Long SSID/password validation
-  
-  # test_build_mqtt_command
-  - Valid params return command
-  - Empty broker returns error
-  - Invalid port returns error
-  
-  # test_build_ota_command
-  - Valid URLs return command
-  - Invalid URL format returns error
-  - Empty URLs allowed (optional)
-  
-  # test_extract_network_from_properties
-  - Extracts all config types
-  - Handles missing fields
-  - Uses defaults for missing values
-  ```
-- **Dependencies**: Task 3.1
-- **Acceptance Criteria**:
-  - [ ] All command builders tested
-  - [ ] Validation logic tested
-  - [ ] Property extraction tested
-- **Validation**:
-  - [ ] `pytest tests/test_network_config.py -v` passes
-
-### Task 3.6: Create Integration Test for Critical Bug
-
-- **Location**: `tests/test_integration.py`
-- **Description**: Regression test for URL3/URL4 bug
-- **Test Case**:
-  ```python
-  def test_ota_url_assignment():
-      """Regression test: URL3 and URL4 should be independent."""
-      app = StableSensorCalibrator()
-      app.sensor_properties = {
-          "sys": {
-              "URL1": "http://example1.com",
-              "URL2": "http://example2.com", 
-              "URL3": "http://example3.com",
-              "URL4": "http://example4.com"
-          }
-      }
-      app.extract_network_config()
-      
-      assert app.ota_params["URL1"] == "http://example1.com"
-      assert app.ota_params["URL2"] == "http://example2.com"
-      assert app.ota_params["URL3"] == "http://example3.com"  # Was buggy
-      assert app.ota_params["URL4"] == "http://example4.com"  # Was buggy
-      
-      # Test independence: URL2 empty shouldn't affect URL3
-      app.sensor_properties["sys"]["URL2"] = ""
-      app.extract_network_config()
-      assert app.ota_params["URL3"] == "http://example3.com"  # Should still be set
-  ```
-- **Dependencies**: Task 1.1, 3.1
-- **Acceptance Criteria**:
-  - [ ] Test fails before bug fix
-  - [ ] Test passes after bug fix
-- **Validation**:
-  - [ ] `pytest tests/test_integration.py -v` passes
-
-### Sprint 3 Demo/Validation
-
-- [ ] `pytest` runs all tests successfully
-- [ ] Code coverage > 60% for core modules
-- [ ] CI/CD can run tests automatically
+**需要修改的位置**：
+1. 方法定义：
+   - `def set_OTA_config` → `def set_ota_config`
+   - `def read_OTA_config` → `def read_ota_config`
+2. 回调函数字典（Line ~225-226）：
+   - `'set_OTA_config'` → `'set_ota_config'`
+   - `'read_OTA_config'` → `'read_ota_config'`
+3. UIManager 中的回调引用：
+   - 检查 `ui_manager.py` Line ~619, 628
 
 ---
 
-## Sprint 4: Type Safety and Documentation (P2)
+## Sprint 3: 代码风格统一
+**Goal**: 统一硬编码值，减少 magic numbers
+**Demo/Validation**:
+- 代码审查确认无硬编码问题
+- 测试通过
 
-**Goal**: Add type hints and improve documentation  
-**Duration**: 1 week  
-**Risk**: Low
-
-### Task 4.1: Add Type Hints to Core Modules
-
-- **Location**: `sensor_calibrator/*.py`
-- **Description**: Add comprehensive type annotations
-- **Priority Order**:
-  1. `calibration.py` (already has some, complete it)
-  2. `activation.py`
-  3. `network_config.py`
-  4. `data_pipeline.py`
-- **Example**:
-  ```python
-  # BEFORE
-  def validate_mac_address(mac_str):
-      """验证 MAC 地址格式。"""
-      if not mac_str or not isinstance(mac_str, str):
-          return False
-  
-  # AFTER
-  def validate_mac_address(mac_str: Optional[str]) -> bool:
-      """验证 MAC 地址格式。
-      
-      Args:
-          mac_str: MAC address string to validate (e.g., "AA:BB:CC:DD:EE:FF")
-          
-      Returns:
-          True if valid MAC address format, False otherwise
-      """
-      if not mac_str or not isinstance(mac_str, str):
-          return False
-  ```
-- **Dependencies**: None
+### Task 3.1: 统一图表 Y 轴 padding 配置
+- **Location**: `sensor_calibrator/chart_manager.py`
+- **Description**: 
+  - Line ~462-463, 482-483 使用硬编码值 `-2` 和 `+2`
+  - 应该使用 `Config.CHART_Y_PADDING` 或其他配置常量
+- **Dependencies**: 无
 - **Acceptance Criteria**:
-  - [ ] All public functions have type hints
-  - [ ] Complex return types use TypedDict or NamedTuple
-  - [ ] `mypy` runs without errors
+  - 移除硬编码值
+  - 使用配置常量替代
 - **Validation**:
-  - [ ] `mypy sensor_calibrator/` passes
-  - [ ] No `Any` types unless justified
+  - 代码审查
+  - 运行测试
 
-### Task 4.2: Improve Documentation
-
-- **Location**: All Python files
-- **Description**: Add comprehensive docstrings
-- **Documentation Standards**:
-  ```python
-  def method_name(self, param1: str, param2: int) -> bool:
-      """Brief description of what this method does.
-      
-      More detailed explanation if needed. Can span multiple
-      lines and describe the algorithm or approach.
-      
-      Args:
-          param1: Description of param1
-          param2: Description of param2
-          
-      Returns:
-          Description of return value
-          
-      Raises:
-          ValueError: When input is invalid
-          SerialException: When serial communication fails
-          
-      Example:
-          >>> obj.method_name("test", 42)
-          True
-      """
-  ```
-- **Priority Methods**:
-  - All public methods in `StableSensorCalibrator`
-  - Complex calibration logic
-  - Thread-related methods
-- **Dependencies**: None
+### Task 3.2: 移除重复赋值
+- **Location**: `StableSensorCalibrator.py` Line ~1078-1080
+- **Description**: 
+  - `self.is_reading = False` 重复赋值
+  - 移除重复行
+- **Dependencies**: 无
 - **Acceptance Criteria**:
-  - [ ] All public methods have docstrings
-  - [ ] All modules have module docstrings
-  - [ ] Complex algorithms explained
+  - 移除重复代码
 - **Validation**:
-  - [ ] `pydocstyle` passes (optional)
-  - [ ] Documentation builds without warnings (if using Sphinx)
+  - 代码审查
 
-### Task 4.3: Code Formatting Setup
-
-- **Location**: Project root
-- **Description**: Setup automated code formatting
-- **Tools**:
-  - `black` for formatting
-  - `isort` for import sorting
-  - `flake8` for linting
-- **Files to Create**:
-  ```toml
-  # pyproject.toml
-  [tool.black]
-  line-length = 100
-  target-version = ['py38']
-  
-  [tool.isort]
-  profile = "black"
-  line_length = 100
-  ```
-- **Dependencies**: None
+### Task 3.3: 优化导入顺序
+- **Location**: `data_pipeline.py` Line ~148
+- **Description**: 
+  - `import queue` 是局部导入，移到文件顶部
+- **Dependencies**: 无
 - **Acceptance Criteria**:
-  - [ ] `black` formats all files consistently
-  - [ ] `isort` sorts imports
-  - [ ] `flake8` passes with minimal exceptions
+  - 导入语句位于文件顶部
 - **Validation**:
-  - [ ] `black --check .` passes
-  - [ ] `isort --check-only .` passes
-  - [ ] `flake8` passes
+  - 代码审查
 
-### Task 4.4: Create Pre-commit Hooks
+---
 
-- **Location**: `.pre-commit-config.yaml`
-- **Description**: Setup pre-commit hooks for code quality
-- **Hooks to Add**:
-  - black
-  - isort
-  - flake8
-  - mypy
-  - trailing-whitespace
-  - end-of-file-fixer
-- **Dependencies**: Task 4.3
+## Sprint 4: 可选改进
+**Goal**: 提升代码质量（可选，视时间而定）
+**Demo/Validation**:
+- 类型检查工具通过（如有配置）
+
+### Task 4.1: 补充类型注解
+- **Location**: `StableSensorCalibrator.py`
+- **Description**: 
+  - 为主要方法添加类型注解
+  - 优先处理公共 API 方法
+- **Dependencies**: 无
 - **Acceptance Criteria**:
-  - [ ] `pre-commit install` works
-  - [ ] All hooks pass
+  - 关键方法有类型注解
 - **Validation**:
-  - [ ] `pre-commit run --all-files` passes
+  - 代码审查
 
-### Sprint 4 Demo/Validation
-
-- [ ] `mypy` passes with no errors
-- [ ] All public APIs documented
-- [ ] Code formatted consistently
-- [ ] Pre-commit hooks installed and working
+### Task 4.2: 收紧异常捕获范围
+- **Location**: `serial_manager.py` Line ~72
+- **Description**: 
+  - `except Exception` 改为 `except serial.SerialException`
+- **Dependencies**: 无
+- **Acceptance Criteria**:
+  - 只捕获预期的异常类型
+- **Validation**:
+  - 代码审查
+  - 运行测试
 
 ---
 
 ## Testing Strategy
 
-### Unit Tests (per sprint)
+### 每 Sprint 验证
+1. **单元测试**: `python tests/test_integration.py`
+2. **冒烟测试**: 确认所有模块可导入
+3. **代码审查**: 检查修改点
 
-Each task includes its own unit tests. Tests should:
-- Run in isolation
-- Not require hardware
-- Use mocks for serial communication
-- Complete in < 1 second each
-
-### Integration Tests
-
-- End-to-end workflow testing
-- May require hardware for full validation
-- Run in CI/CD pipeline
-
-### Manual Testing Checklist
-
-After each sprint, verify:
-- [ ] Application starts without errors
-- [ ] Can connect to serial port
-- [ ] Data streaming works
-- [ ] Calibration workflow completes
-- [ ] Configuration commands send correctly
-- [ ] Properties read and display correctly
+### 最终验证
+- [ ] 所有测试通过
+- [ ] 代码审查无问题
+- [ ] 无属性名大小写不匹配问题
+- [ ] 无不存在的控件引用
 
 ---
 
 ## Potential Risks & Gotchas
 
-### Risk 1: URL Bug Fix Side Effects
-**Issue**: The URL3/URL4 bug might have been masking other issues.  
-**Mitigation**: Thorough testing of OTA config functionality after fix.
+### 风险 1: 属性名替换遗漏
+**问题**: `set_OTA_btn` 替换可能遗漏某些引用
+**缓解**: 
+- 使用全局搜索（大小写敏感）确认
+- 搜索关键词：`OTA_btn`、`set_OTA`
 
-### Risk 2: Exception Handling Changes
-**Issue**: More specific exceptions might reveal hidden bugs.  
-**Mitigation**: Add logging to catch new exception types, monitor logs.
+### 风险 2: 方法重命名影响回调
+**问题**: `set_OTA_config` 重命名后，回调字典需要同步更新
+**缓解**:
+- 同时检查 UIManager 中的回调绑定
+- 搜索所有 `'set_OTA'` 字符串引用
 
-### Risk 3: Thread Safety in Tests
-**Issue**: Tests for `data_buffer.py` might be flaky due to threading.  
-**Mitigation**: Use deterministic thread synchronization in tests.
+### 风险 3: 串口相关功能回退
+**问题**: 修复可能意外影响串口通信功能
+**缓解**:
+- 保持 `SerialManager` 模块不变
+- 仅修改 UI 层面的引用
 
-### Risk 4: Type Hint Compatibility
-**Issue**: Type hints might break Python < 3.8 compatibility.  
-**Mitigation**: Use `from __future__ import annotations` or `typing_extensions`.
-
-### Risk 5: Refactoring Regression
-**Issue**: Extracting common code might introduce bugs.  
-**Mitigation**: Comprehensive tests before and after refactoring.
+### 风险 4: 大小写敏感文件系统
+**问题**: Windows 不区分大小写，但 Linux/Mac 区分
+**缓解**:
+- 确保所有引用统一为小写
+- 在大小写敏感的环境中测试（如有条件）
 
 ---
 
 ## Rollback Plan
 
-### Per-Sprint Rollback
-
-Each sprint is designed to be independent. If issues arise:
-1. Revert commits for that sprint only
-2. Previous sprints remain functional
-3. Fix issues in isolation
-
-### Emergency Full Rollback
-
-```bash
-# If critical issue in production
-git checkout main
-git branch -D fix/code-review-issues
-```
-
-### Database/Config Compatibility
-
-- No database schema changes
-- Config file format unchanged
-- All changes are backward compatible
+如果需要回滚：
+1. 使用 git 回滚到修改前版本：`git checkout -- <files>`
+2. 或从备份恢复文件
 
 ---
 
-## Success Metrics
+## 实施检查清单
 
-| Metric | Before | After Target |
-|--------|--------|--------------|
-| Critical Bugs | 1 | 0 |
-| Test Coverage | 0% | > 60% |
-| Type Hint Coverage | ~10% | > 80% |
-| Code Duplication | High | Low |
-| Documentation | Sparse | Comprehensive |
-| Code Style | Inconsistent | Automated |
-
----
-
-## Timeline Summary
-
-```
-Week 1: Sprint 1 (Critical Bugs) + Sprint 2 start
-Week 2: Sprint 2 complete + Sprint 3 start  
-Week 3: Sprint 3 complete + Sprint 4
-```
-
----
-
-**Next Steps**:
-1. Create Git branch `fix/code-review-issues`
-2. Start Sprint 1 immediately (P0 bugs)
-3. Schedule code review for Sprint 1 completion
-4. Proceed to subsequent sprints
+- [ ] Sprint 1: 高优先级 Bug 修复
+  - [ ] Task 1.1: 修复 `set_OTA_btn` 大小写
+  - [ ] Task 1.2: 修复 `read_btn` 引用
+  - [ ] Task 1.3: 修复 `disconnect_serial` 引用
+- [ ] Sprint 2: 注释和文档修正
+  - [ ] Task 2.1: 修正 docstring
+  - [ ] Task 2.2: 统一方法命名
+- [ ] Sprint 3: 代码风格统一
+  - [ ] Task 3.1: 统一 Y 轴 padding
+  - [ ] Task 3.2: 移除重复赋值
+  - [ ] Task 3.3: 优化导入顺序
+- [ ] Sprint 4: 可选改进（可选）
+  - [ ] Task 4.1: 类型注解
+  - [ ] Task 4.2: 收紧异常捕获
+- [ ] 最终验证
+  - [ ] 所有测试通过
+  - [ ] 代码审查完成

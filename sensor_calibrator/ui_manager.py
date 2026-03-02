@@ -618,7 +618,7 @@ class UIManager:
         set_ota_btn = ttk.Button(
             ota_btn_frame,
             text="Set OTA",
-            command=self.callbacks.get('set_OTA_config', lambda: None),
+            command=self.callbacks.get('set_ota_config', lambda: None),
             state="disabled",
             width=10,
         )
@@ -628,7 +628,7 @@ class UIManager:
         read_ota_btn = ttk.Button(
             ota_btn_frame,
             text="Read OTA",
-            command=self.callbacks.get('read_OTA_config', lambda: None),
+            command=self.callbacks.get('read_ota_config', lambda: None),
             state="disabled",
             width=10,
         )
