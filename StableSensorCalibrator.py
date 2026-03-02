@@ -17,6 +17,7 @@ import re
 import matplotlib
 import atexit
 from collections import deque
+from typing import Optional
 
 # Import configuration
 from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor, SerialManager, NetworkManager, CalibrationWorkflow, ActivationWorkflow
