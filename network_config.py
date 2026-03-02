@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 from sensor_calibrator import validate_password, validate_port, validate_ssid, validate_url
 
@@ -67,7 +67,7 @@ def build_ota_command(url1: str, url2: str, url3: str, url4: str) -> Tuple[bool,
     return True, "", cmd
 
 
-def extract_network_from_properties(sensor_properties: Dict) -> Dict[str, Dict[str, str]]:
+def extract_network_from_properties(sensor_properties: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
     """
     从设备属性字典中提取 WiFi / MQTT / OTA 配置信息。
     返回形如:

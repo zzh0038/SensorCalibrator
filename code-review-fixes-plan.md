@@ -1,259 +1,191 @@
-# Plan: Code Review Fixes
+# Plan: 代码审查问题修复（中高优先级）
 
 **Generated**: 2026-03-02
 **Estimated Complexity**: Low
+**Scope**: 选项B - 修复中高优先级问题（🔴+🟡）
 
 ## Overview
-根据 Code Review 发现的问题，修复代码中的错误、不一致性和潜在 bug。主要涉及：
-1. 修复属性名大小写不匹配问题（高优先级）
-2. 修复不存在的控件引用（高优先级）
-3. 修正错误注释和命名
-4. 统一代码风格
+根据代码审查发现的中高优先级问题，进行系统性修复，包括类型注解完善、异常处理优化、代码结构改进、性能优化和文档补充。所有修改保持向后兼容。
 
 ## Prerequisites
-- 现有测试套件通过
-- Python 环境已配置
-- 代码备份或版本控制
+- Python 3.8+
+- 现有测试用例全部通过
+- 不涉及mypy等额外类型检查工具（仅通过运行测试验证）
 
 ---
 
-## Sprint 1: 修复高优先级 Bug
-**Goal**: 修复会导致功能失效的属性名错误和控件引用错误
-**Demo/Validation**:
-- 运行测试套件确保全部通过
-- 验证 OTA 配置按钮状态可以正常切换
-- 验证串口断开时按钮状态正确更新
+## Sprint 1: 类型注解完善
+**Goal**: 修复所有类型注解不一致和缺失问题
+**Demo/Validation**: 
+- 所有现有测试通过: `python -m unittest tests.test_integration -v`
+- 无导入错误: `python -c "from sensor_calibrator import *; from network_config import *"`
 
-### Task 1.1: 修复 `set_OTA_btn` 属性名大小写不匹配
-- **Location**: `StableSensorCalibrator.py`
-- **Description**: 
-  - UIManager 中定义的是 `set_ota_btn`（小写）
-  - StableSensorCalibrator 中使用的是 `set_OTA_btn`（大写）
-  - 需要统一为小写 `set_ota_btn`
+### Task 1.1: 修复 `sensor_calibrator/__init__.py` 返回值类型
+- **Location**: `sensor_calibrator/__init__.py` 第41-76行
+- **Description**: 将 `tuple` 改为 `Tuple[bool, str]`，添加必要的 import
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - 所有 `set_OTA_btn` 引用改为 `set_ota_btn`
-  - `read_OTA_btn` 引用改为 `read_ota_btn`
-- **Validation**:
-  - 搜索确认没有大写引用残留
-  - 运行测试 `python tests/test_integration.py`
+  - 导入 `from typing import Tuple`
+  - 四个验证函数的返回类型改为 `Tuple[bool, str]`
+- **Validation**: 
+  - 运行测试: `python -m unittest tests.test_integration -v`
+  - 测试通过
 
-**具体修改位置**：
-1. Line ~350: `self.set_OTA_btn` → `self.set_ota_btn`
-2. Line ~354: `self.set_OTA_btn` → `self.set_ota_btn`
-3. Line ~859: `set_OTA_btn` → `set_ota_btn`
-4. Line ~861: `set_OTA_btn` → `set_ota_btn`
-5. Line ~860: `read_OTA_btn` → `read_ota_btn`
-6. Line ~862: `read_OTA_btn` → `read_ota_btn`
-
-### Task 1.2: 修复 `read_btn` 引用错误
-- **Location**: `StableSensorCalibrator.py`
-- **Description**: 
-  - `_setup_ui_references()` 中引用了 `read_btn`
-  - 但 UIManager 中定义的是 `read_props_btn`
-  - 需要统一为 `read_props_btn`
-- **Dependencies**: 无
+### Task 1.2: 修复 `network_config.py` 类型注解
+- **Location**: `network_config.py` 第1-70行
+- **Description**: 为 `extract_network_from_properties` 函数的参数添加完整的类型注解
+- **Dependencies**: Task 1.1（相同类型的导入）
 - **Acceptance Criteria**:
-  - 将 `self.read_btn` 改为 `self.read_props_btn`
+  - 导入 `from typing import Dict, Any`
+  - 修改参数类型为 `Dict[str, Any]`
 - **Validation**:
-  - 确认没有 `read_btn` 引用残留
-  - 运行测试
-
-**具体修改位置**：
-- Line ~323: `self.read_btn = self.ui_manager.get_widget('read_btn')` → `self.read_props_btn`
-
-### Task 1.3: 修复 `disconnect_serial` 中引用问题
-- **Location**: `StableSensorCalibrator.py`
-- **Description**: 
-  - `disconnect_serial` 方法引用了 `self.read_btn`，应该是 `self.read_props_btn`
-- **Dependencies**: Task 1.2
-- **Acceptance Criteria**:
-  - 修复引用错误
-- **Validation**:
-  - 代码审查确认
+  - 运行测试确保网络配置相关测试通过
 
 ---
 
-## Sprint 2: 修正注释和文档
-**Goal**: 修复错误的注释和文档字符串
+## Sprint 2: 异常处理与代码结构优化
+**Goal**: 细化异常捕获范围，改进代码组织
 **Demo/Validation**:
-- 代码审查确认注释与功能匹配
+- 异常处理更精确，不会隐藏意外错误
+- 所有测试通过
 
-### Task 2.1: 修正 `set_OTA_config` 方法的文档字符串
-- **Location**: `StableSensorCalibrator.py` Line ~566
-- **Description**: 
-  - 当前注释是 `"""设置MQTT配置"""`
-  - 应该改为 `"""设置OTA配置"""`
+### Task 2.1: 优化 `data_pipeline.py` 异常处理
+- **Location**: `data_pipeline.py` 第32-50行
+- **Description**: 将宽泛的 `except Exception` 改为捕获特定异常类型
+- **Dependencies**: 无
+- **Implementation Notes**:
+  - 主异常：`queue.Full`（队列满时）
+  - 日志异常：`AttributeError, TypeError`（logger调用问题）
+  - 保留兜底：在最外层保留 `Exception` 防止意外崩溃，但记录详细错误
+- **Acceptance Criteria**:
+  - 区分队列操作异常和日志异常
+  - 添加注释说明为何保留最外层兜底
+- **Validation**:
+  - 创建简单测试验证队列满时的行为
+  - 所有现有测试通过
+
+### Task 3.1: 移动 `serial_manager.py` 局部导入
+- **Location**: `serial_manager.py` 第1-10行, 第142行
+- **Description**: 将 `import queue` 从函数内部移到文件顶部
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - 文档字符串与功能匹配
+  - 删除函数内部的 `import queue`
+  - 在文件顶部添加 `import queue`
 - **Validation**:
-  - 代码审查
+  - 串口功能测试通过
+  - 所有测试通过
 
-### Task 2.2: 统一方法命名风格
-- **Location**: `StableSensorCalibrator.py`
-- **Description**: 
-  - `set_OTA_config` 应该改为 `set_ota_config`（小写）
-  - `read_OTA_config` 应该改为 `read_ota_config`（小写）
-  - 同步更新所有调用点
-- **Dependencies**: Sprint 1 完成
+### Task 3.2: 优化 `data_buffer.py` 重复检查
+- **Location**: `sensor_calibrator/data_buffer.py` 第78-95行
+- **Description**: 简化 `_enforce_size_limit` 方法中的重复条件检查
+- **Dependencies**: 无
+- **Implementation Notes**:
+  - 当前代码在已检查总长度后，又分别检查每个通道的长度
+  - 由于数据是同步添加的，各通道长度应该一致
+  - 简化后保留一个统一的长度检查
 - **Acceptance Criteria**:
-  - 方法名符合 Python 命名规范（snake_case，全小写）
-  - 所有调用点已更新
+  - 移除不必要的重复长度检查
+  - 保持线程安全性（锁仍然需要）
 - **Validation**:
-  - 运行测试
-  - 搜索确认没有大写方法名残留
-
-**需要修改的位置**：
-1. 方法定义：
-   - `def set_OTA_config` → `def set_ota_config`
-   - `def read_OTA_config` → `def read_ota_config`
-2. 回调函数字典（Line ~225-226）：
-   - `'set_OTA_config'` → `'set_ota_config'`
-   - `'read_OTA_config'` → `'read_ota_config'`
-3. UIManager 中的回调引用：
-   - 检查 `ui_manager.py` Line ~619, 628
+  - 测试缓冲区大小限制功能正常
+  - 多线程测试通过（如果有）
 
 ---
 
-## Sprint 3: 代码风格统一
-**Goal**: 统一硬编码值，减少 magic numbers
+## Sprint 3: 性能优化与文档补充
+**Goal**: 性能优化和关键文档完善
 **Demo/Validation**:
-- 代码审查确认无硬编码问题
-- 测试通过
+- 正则表达式性能提升（虽然影响较小）
+- 主要类有基本文档
 
-### Task 3.1: 统一图表 Y 轴 padding 配置
-- **Location**: `sensor_calibrator/chart_manager.py`
-- **Description**: 
-  - Line ~462-463, 482-483 使用硬编码值 `-2` 和 `+2`
-  - 应该使用 `Config.CHART_Y_PADDING` 或其他配置常量
+### Task 4.1: 预编译正则表达式
+- **Location**: `activation.py` 第1-41行
+- **Description**: 将 MAC 地址验证的正则表达式预编译为模块级常量
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - 移除硬编码值
-  - 使用配置常量替代
+  - 添加模块级 `_MAC_PATTERN = re.compile(...)`
+  - `validate_mac_address` 使用预编译的正则
+  - `extract_mac_from_properties` 中的正则也使用预编译版本（如有必要）
 - **Validation**:
-  - 代码审查
-  - 运行测试
+  - 运行激活相关测试
+  - 验证 MAC 地址验证功能正常
 
-### Task 3.2: 移除重复赋值
-- **Location**: `StableSensorCalibrator.py` Line ~1078-1080
-- **Description**: 
-  - `self.is_reading = False` 重复赋值
-  - 移除重复行
+### Task 4.2: 为主类添加文档字符串
+- **Location**: `StableSensorCalibrator.py` 第31-60行
+- **Description**: 为主类和 `__init__` 方法添加文档字符串
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - 移除重复代码
+  - `StableSensorCalibrator` 类有模块级文档字符串（描述职责）
+  - `__init__` 方法有文档字符串（描述初始化内容）
+  - 保持简洁，不过度文档化
 - **Validation**:
-  - 代码审查
-
-### Task 3.3: 优化导入顺序
-- **Location**: `data_pipeline.py` Line ~148
-- **Description**: 
-  - `import queue` 是局部导入，移到文件顶部
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  - 导入语句位于文件顶部
-- **Validation**:
-  - 代码审查
+  - 代码可读性提升
+  - 无功能性改变（通过测试验证）
 
 ---
 
-## Sprint 4: 可选改进
-**Goal**: 提升代码质量（可选，视时间而定）
-**Demo/Validation**:
-- 类型检查工具通过（如有配置）
+## 排除的 Sprint 5（低优先级）
 
-### Task 4.1: 补充类型注解
-- **Location**: `StableSensorCalibrator.py`
-- **Description**: 
-  - 为主要方法添加类型注解
-  - 优先处理公共 API 方法
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  - 关键方法有类型注解
-- **Validation**:
-  - 代码审查
+以下任务在本次范围之外：
+- ~~Task 5.1: 移动测试函数到 tests 目录~~
+- ~~Task 5.2: 标准化导入排序~~
 
-### Task 4.2: 收紧异常捕获范围
-- **Location**: `serial_manager.py` Line ~72
-- **Description**: 
-  - `except Exception` 改为 `except serial.SerialException`
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  - 只捕获预期的异常类型
-- **Validation**:
-  - 代码审查
-  - 运行测试
+原因：这些属于代码清理和风格优化，不影响功能正确性，风险收益比低。
 
 ---
 
 ## Testing Strategy
 
-### 每 Sprint 验证
-1. **单元测试**: `python tests/test_integration.py`
-2. **冒烟测试**: 确认所有模块可导入
-3. **代码审查**: 检查修改点
+### 每轮验证
+1. **单元测试**: `python -m unittest tests.test_integration -v`
+2. **导入测试**: `python -c "import sensor_calibrator; from calibration import *; from activation import *"`
+3. **功能测试**: 验证主要功能（激活、校准、网络配置）基本导入正常
 
-### 最终验证
-- [ ] 所有测试通过
-- [ ] 代码审查无问题
-- [ ] 无属性名大小写不匹配问题
-- [ ] 无不存在的控件引用
+### Sprint 完成后验证
+- 确保所有 21 个现有测试仍通过
+- 确认无新的导入错误
 
 ---
 
-## Potential Risks & Gotchas
+## 文件修改清单
 
-### 风险 1: 属性名替换遗漏
-**问题**: `set_OTA_btn` 替换可能遗漏某些引用
-**缓解**: 
-- 使用全局搜索（大小写敏感）确认
-- 搜索关键词：`OTA_btn`、`set_OTA`
-
-### 风险 2: 方法重命名影响回调
-**问题**: `set_OTA_config` 重命名后，回调字典需要同步更新
-**缓解**:
-- 同时检查 UIManager 中的回调绑定
-- 搜索所有 `'set_OTA'` 字符串引用
-
-### 风险 3: 串口相关功能回退
-**问题**: 修复可能意外影响串口通信功能
-**缓解**:
-- 保持 `SerialManager` 模块不变
-- 仅修改 UI 层面的引用
-
-### 风险 4: 大小写敏感文件系统
-**问题**: Windows 不区分大小写，但 Linux/Mac 区分
-**缓解**:
-- 确保所有引用统一为小写
-- 在大小写敏感的环境中测试（如有条件）
+| Sprint | 文件 | 修改内容 | 风险级别 |
+|--------|------|----------|----------|
+| 1 | `sensor_calibrator/__init__.py` | 添加 Tuple 导入，修改返回值类型 | 低 |
+| 1 | `network_config.py` | 添加 Dict, Any 导入，修改参数类型 | 低 |
+| 2 | `data_pipeline.py` | 细化异常捕获 | 中（需测试） |
+| 2 | `serial_manager.py` | 移动 import queue 位置 | 低 |
+| 2 | `sensor_calibrator/data_buffer.py` | 简化重复检查 | 中（需验证线程安全） |
+| 3 | `activation.py` | 预编译正则表达式 | 低 |
+| 3 | `StableSensorCalibrator.py` | 添加文档字符串 | 极低 |
 
 ---
 
-## Rollback Plan
+## Potential Risks & Mitigation
 
-如果需要回滚：
-1. 使用 git 回滚到修改前版本：`git checkout -- <files>`
-2. 或从备份恢复文件
+| 风险 | Sprint | 影响 | 缓解策略 |
+|------|--------|------|----------|
+| 异常细化可能暴露隐藏bug | 2.1 | 中 | 保留最外层兜底，记录详细错误 |
+| data_buffer 简化影响线程安全 | 3.2 | 中 | 确保锁机制不变，仅简化条件检查 |
+| 类型注解语法错误 | 1.x | 低 | 修改后立即运行导入测试 |
 
 ---
 
-## 实施检查清单
+## 实施顺序
 
-- [ ] Sprint 1: 高优先级 Bug 修复
-  - [ ] Task 1.1: 修复 `set_OTA_btn` 大小写
-  - [ ] Task 1.2: 修复 `read_btn` 引用
-  - [ ] Task 1.3: 修复 `disconnect_serial` 引用
-- [ ] Sprint 2: 注释和文档修正
-  - [ ] Task 2.1: 修正 docstring
-  - [ ] Task 2.2: 统一方法命名
-- [ ] Sprint 3: 代码风格统一
-  - [ ] Task 3.1: 统一 Y 轴 padding
-  - [ ] Task 3.2: 移除重复赋值
-  - [ ] Task 3.3: 优化导入顺序
-- [ ] Sprint 4: 可选改进（可选）
-  - [ ] Task 4.1: 类型注解
-  - [ ] Task 4.2: 收紧异常捕获
-- [ ] 最终验证
-  - [ ] 所有测试通过
-  - [ ] 代码审查完成
+```
+Sprint 1: 类型注解 → Sprint 2: 异常与结构 → Sprint 3: 性能与文档
+```
+
+每个 Task 独立可提交，便于回滚。
+
+---
+
+## 等待确认
+
+**在你明确批准前，我不会修改任何代码。**
+
+请确认：
+1. ✅ 计划范围（选项B：中高优先级，7个Task）
+2. ✅ 实施顺序（Sprint 1 → 2 → 3）
+3. ✅ 是否开始实施 Sprint 1？

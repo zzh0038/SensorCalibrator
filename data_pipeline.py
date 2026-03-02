@@ -41,11 +41,18 @@ class DataHub:
                     except queue.Empty:
                         pass
                 q.put_nowait(sample)
+            except queue.Full:
+                # 队列满时丢弃数据，不中断其他订阅者
+                if self._logger:
+                    try:
+                        self._logger(f"DataHub: queue full for subscriber '{name}'")
+                    except (AttributeError, TypeError):
+                        pass
             except Exception:
-                # 记录错误但不中断其他订阅者
+                # 其他意外错误，记录后继续处理其他订阅者
                 if self._logger:
                     try:
                         self._logger(f"DataHub: failed to publish to subscriber '{name}'")
-                    except Exception:
+                    except (AttributeError, TypeError):
                         pass
 

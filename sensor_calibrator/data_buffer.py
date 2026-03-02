@@ -82,17 +82,14 @@ class SensorDataBuffer:
             # Calculate start index for retention
             start_idx = current_len - self._max_points
             
-            # Slice all data arrays
+            # Slice all data arrays (all channels have same length as time_data)
             self._time_data = self._time_data[start_idx:]
             self._gravity_mag_data = self._gravity_mag_data[start_idx:]
             
             for i in range(3):
-                if len(self._mpu_accel_data[i]) > self._max_points:
-                    self._mpu_accel_data[i] = self._mpu_accel_data[i][start_idx:]
-                if len(self._mpu_gyro_data[i]) > self._max_points:
-                    self._mpu_gyro_data[i] = self._mpu_gyro_data[i][start_idx:]
-                if len(self._adxl_accel_data[i]) > self._max_points:
-                    self._adxl_accel_data[i] = self._adxl_accel_data[i][start_idx:]
+                self._mpu_accel_data[i] = self._mpu_accel_data[i][start_idx:]
+                self._mpu_gyro_data[i] = self._mpu_gyro_data[i][start_idx:]
+                self._adxl_accel_data[i] = self._adxl_accel_data[i][start_idx:]
     
     # -------------------------------------------------------------------------
     # Data Access

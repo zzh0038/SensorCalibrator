@@ -4,6 +4,8 @@ SensorCalibrator Package
 A sensor calibration application for MPU6050 and ADXL355 sensors.
 """
 
+from typing import Tuple
+
 from .config import (
     Config,
     SerialConfig,
@@ -38,7 +40,7 @@ __all__ = [
 ]
 
 
-def validate_ssid(ssid: str) -> tuple:
+def validate_ssid(ssid: str) -> Tuple[bool, str]:
     """Validate WiFi SSID."""
     if not ssid:
         return False, "SSID cannot be empty"
@@ -47,14 +49,14 @@ def validate_ssid(ssid: str) -> tuple:
     return True, ""
 
 
-def validate_password(password: str) -> tuple:
+def validate_password(password: str) -> Tuple[bool, str]:
     """Validate WiFi/Network password."""
     if len(password) > 64:
         return False, "Password too long (max 64 characters)"
     return True, ""
 
 
-def validate_port(port: str) -> tuple:
+def validate_port(port: str) -> Tuple[bool, str]:
     """Validate network port number."""
     if not port:
         return False, "Port cannot be empty"
@@ -67,7 +69,7 @@ def validate_port(port: str) -> tuple:
     return True, ""
 
 
-def validate_url(url: str) -> tuple:
+def validate_url(url: str) -> Tuple[bool, str]:
     """Validate URL format."""
     if not url:
         return True, ""

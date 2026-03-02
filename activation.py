@@ -3,6 +3,10 @@ import re
 import secrets
 from typing import Dict, Optional
 
+# Pre-compiled regex patterns for performance
+_MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$")
+_MAC_EXTRACT_PATTERN = re.compile(r"(?:[^0-9A-Fa-f]|^)([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})(?:[^0-9A-Fa-f]|$)")
+
 
 def generate_key_from_mac(mac_address: str) -> str:
     """
@@ -37,8 +41,7 @@ def validate_mac_address(mac_str: str) -> bool:
     """验证 MAC 地址格式。"""
     if not mac_str or not isinstance(mac_str, str):
         return False
-    mac_pattern = r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-    return re.match(mac_pattern, mac_str) is not None
+    return _MAC_PATTERN.match(mac_str) is not None
 
 
 def extract_mac_from_properties(sensor_properties: Dict) -> Optional[str]:
@@ -59,8 +62,7 @@ def extract_mac_from_properties(sensor_properties: Dict) -> Optional[str]:
     # 尝试从设备名称中解析
     dn_value = sys_info.get("DN")
     if isinstance(dn_value, str):
-        mac_pattern = r"([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"
-        match = re.search(mac_pattern, dn_value)
+        match = _MAC_EXTRACT_PATTERN.search(dn_value)
         if match:
             return match.group()
 

@@ -1,3 +1,4 @@
+import queue
 import threading
 import time
 from typing import Callable, List, Optional, Tuple
@@ -138,8 +139,6 @@ class SerialManager:
         """
         if not self.is_open:
             raise RuntimeError("SerialManager: Port is not open")
-
-        import queue  # 局部导入避免顶层依赖
 
         all_lines: List[str] = []
         line_queue: "queue.Queue[str]" = queue.Queue()

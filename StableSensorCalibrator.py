@@ -29,7 +29,22 @@ plt.rcParams["axes.unicode_minus"] = False
 
 
 class StableSensorCalibrator:
+    """
+    MPU6050 & ADXL355 传感器校准应用程序主类。
+    
+    提供串口通信、数据采集可视化、六位置校准、
+    激活验证和网络配置等功能。
+    
+    Attributes:
+        data_processor: 数据处理器，管理传感器数据解析和统计
+        calibration_params: 校准参数字典
+        sensor_properties: 传感器属性字典
+        is_connected: 串口连接状态
+        is_calibrating: 校准状态标志
+    """
+    
     def __init__(self):
+        """初始化应用程序状态和所有组件。"""
         # 初始化所有变量...
         self.ser = None
         self.is_reading = False
