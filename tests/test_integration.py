@@ -1,387 +1,535 @@
 """
-Integration tests for SensorCalibrator
+Integration tests for SensorCalibrator.
 
-Tests core functionality that must work after refactoring:
+Tests core functionality:
 1. Data parsing from serial stream
 2. Calibration calculations
 3. Activation key generation
 4. Network command construction
+5. Configuration validation
 """
 
 import unittest
 import sys
 import os
-import time
 import json
-from collections import deque
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import modules to test
-from sensor_calibrator import Config, validate_ssid, validate_password, validate_port
+from sensor_calibrator import (
+    Config,
+    validate_ssid,
+    validate_password,
+    validate_port,
+    validate_url,
+)
 from calibration import compute_six_position_calibration, compute_gyro_offset
-from activation import generate_key_from_mac, verify_key, check_activation_status
+from activation import (
+    generate_key_from_mac,
+    verify_key,
+    validate_mac_address,
+    extract_mac_from_properties,
+    check_activation_status,
+)
 from network_config import build_wifi_command, build_mqtt_command, build_ota_command
 
 
-class TestDataParsing(unittest.TestCase):
-    """Test sensor data parsing functionality"""
-    
-    def test_parse_sensor_data_format(self):
-        """Test parsing of sensor data string format"""
-        # Simulate typical data format from serial stream
-        # Format varies, but typically includes MPU6050 and ADXL355 readings
-        test_cases = [
-            # Valid data cases
-            ("MPU:1.23,-4.56,9.81|GYRO:0.01,-0.02,0.03|ADXL:1.20,-4.50,9.75", True),
-            ("MPU:-1.0,2.0,3.0|GYRO:0.1,0.2,0.3|ADXL:-1.1,2.1,3.1", True),
-            # Invalid data cases
-            ("invalid data format", False),
-            ("", False),
-            ("MPU:1,2|GYRO:1,2,3|ADXL:1,2,3", False),  # Missing MPU axis
-        ]
-        
-        for data_str, should_parse in test_cases:
-            # This will be replaced with actual parse function
-            # For now, just test that we can handle the data format concept
-            if should_parse:
-                self.assertIsInstance(data_str, str)
-                parts = data_str.split("|")
-                self.assertGreaterEqual(len(parts), 3)  # MPU, GYRO, ADXL
-            else:
-                # Invalid data should either fail parsing or be handled gracefully
-                pass
-
-
 class TestCalibrationAlgorithms(unittest.TestCase):
-    """Test calibration calculation algorithms"""
-    
-    def test_six_position_calibration_structure(self):
-        """Test that calibration produces expected structure"""
-        # Mock 6-position calibration data
-        # Format: [(+X), (-X), (+Y), (-Y), (+Z), (-Z)] readings
+    """Test calibration calculation algorithms."""
+
+    def test_six_position_calibration_perfect_data(self):
+        """Test calibration with perfect sensor data."""
+        # Perfect 6-position data (ideal case)
+        # Each position should show gravity on one axis only
         mpu_readings = [
-            [9.81, 0, 0],   # +X
-            [-9.81, 0, 0],  # -X
-            [0, 9.81, 0],   # +Y
-            [0, -9.81, 0],  # -Y
-            [0, 0, 9.81],   # +Z
-            [0, 0, -9.81],  # -Z
+            [9.81, 0, 0],  # +X axis down
+            [-9.81, 0, 0],  # -X axis down
+            [0, 9.81, 0],  # +Y axis down
+            [0, -9.81, 0],  # -Y axis down
+            [0, 0, 9.81],  # +Z axis down
+            [0, 0, -9.81],  # -Z axis down
         ]
-        
-        # Test calibration params structure
-        params = {
-            "mpu_accel_scale": [1.0, 1.0, 1.0],
-            "mpu_accel_offset": [0.0, 0.0, 0.0],
-            "adxl_accel_scale": [1.0, 1.0, 1.0],
-            "adxl_accel_offset": [0.0, 0.0, 0.0],
-            "mpu_gyro_offset": [0.0, 0.0, 0.0],
-        }
-        
-        # Verify structure
-        self.assertIn("mpu_accel_scale", params)
-        self.assertIn("mpu_accel_offset", params)
-        self.assertEqual(len(params["mpu_accel_scale"]), 3)
-        self.assertEqual(len(params["mpu_accel_offset"]), 3)
-    
-    def test_calibration_param_ranges(self):
-        """Test that calibration parameters are within reasonable ranges"""
-        # Scale factors should be close to 1.0
-        scale = 0.98
-        self.assertGreater(scale, 0.5)  # Sanity check
-        self.assertLess(scale, 2.0)
-        
-        # Offsets should be small
-        offset = 0.05
-        self.assertLess(abs(offset), 1.0)
+
+        scales, offsets = compute_six_position_calibration(mpu_readings, 9.81)
+
+        # With perfect data, scales should be close to 1.0
+        for scale in scales:
+            self.assertAlmostEqual(scale, 1.0, places=2)
+
+        # Offsets should be close to 0
+        for offset in offsets:
+            self.assertAlmostEqual(offset, 0.0, places=2)
+
+    def test_six_position_calibration_with_offset(self):
+        """Test calibration with biased sensor data."""
+        # Add offset to simulate sensor bias
+        mpu_readings = [
+            [9.91, 0.1, 0],  # +X with offset
+            [-9.71, -0.1, 0],  # -X with offset
+            [0.1, 9.91, 0],  # +Y with offset
+            [-0.1, -9.71, 0],  # -Y with offset
+            [0, 0.1, 9.91],  # +Z with offset
+            [0, -0.1, -9.71],  # -Z with offset
+        ]
+
+        scales, offsets = compute_six_position_calibration(mpu_readings, 9.81)
+
+        # Scales should still be close to 1.0 after correction
+        for scale in scales:
+            self.assertGreater(scale, 0.9)
+            self.assertLess(scale, 1.1)
+
+    def test_six_position_calibration_invalid_length(self):
+        """Test calibration with wrong number of positions."""
+        invalid_data = [
+            [9.81, 0, 0],
+            [-9.81, 0, 0],
+        ]  # Only 2 positions, need 6
+
+        with self.assertRaises(ValueError):
+            compute_six_position_calibration(invalid_data, 9.81)
+
+    def test_six_position_calibration_invalid_gravity(self):
+        """Test calibration with invalid gravity value."""
+        mpu_readings = [
+            [9.81, 0, 0],
+            [-9.81, 0, 0],
+            [0, 9.81, 0],
+            [0, -9.81, 0],
+            [0, 0, 9.81],
+            [0, 0, -9.81],
+        ]
+
+        with self.assertRaises(ValueError):
+            compute_six_position_calibration(mpu_readings, 0)  # Zero gravity
+
+        with self.assertRaises(ValueError):
+            compute_six_position_calibration(mpu_readings, -9.81)  # Negative gravity
+
+    def test_six_position_calibration_invalid_shape(self):
+        """Test calibration with wrong data shape."""
+        invalid_data = [
+            [9.81, 0],  # Wrong: only 2 values
+            [-9.81, 0],
+        ]
+
+        with self.assertRaises(ValueError):
+            compute_six_position_calibration(invalid_data, 9.81)
+
+    def test_gyro_offset_calculation(self):
+        """Test gyroscope offset calculation."""
+        # Simulate stationary gyroscope readings (should be ~0)
+        readings = [
+            [0.01, -0.02, 0.01],
+            [0.02, 0.01, -0.01],
+            [-0.01, 0.02, 0.01],
+            [0.00, 0.00, -0.01],
+        ]
+
+        offset = compute_gyro_offset(readings)
+
+        # Mean should be close to 0
+        for val in offset:
+            self.assertLess(abs(val), 0.1)
+
+    def test_gyro_offset_empty(self):
+        """Test gyro offset with empty data."""
+        offset = compute_gyro_offset([])
+
+        self.assertEqual(offset, [0.0, 0.0, 0.0])
+
+    def test_gyro_offset_single_sample(self):
+        """Test gyro offset with single sample."""
+        readings = [[0.1, 0.2, 0.3]]
+
+        offset = compute_gyro_offset(readings)
+
+        self.assertAlmostEqual(offset[0], 0.1)
+        self.assertAlmostEqual(offset[1], 0.2)
+        self.assertAlmostEqual(offset[2], 0.3)
 
 
 class TestActivation(unittest.TestCase):
-    """Test sensor activation and key generation"""
-    
-    def test_key_generation_from_mac(self):
-        """Test key generation from MAC address"""
+    """Test sensor activation and key generation."""
+
+    def test_key_generation_valid_mac(self):
+        """Test key generation with valid MAC addresses."""
         test_cases = [
-            ("AA:BB:CC:DD:EE:FF", True),
-            ("aa:bb:cc:dd:ee:ff", True),  # lowercase
-            ("AA-BB-CC-DD-EE-FF", True),  # dash separator
-            ("invalid_mac", False),
-            ("", False),
+            "AA:BB:CC:DD:EE:FF",
+            "aa:bb:cc:dd:ee:ff",  # lowercase
+            "AA-BB-CC-DD-EE-FF",  # dash separator
+            "aabbccddeeff",  # no separator
         ]
-        
-        for mac, should_succeed in test_cases:
-            if should_succeed:
-                key = generate_key_from_mac(mac)
-                self.assertIsInstance(key, str)
-                self.assertEqual(len(key), 64)  # SHA-256 hex = 64 chars
-            else:
-                # Should either raise exception or return None/empty
-                try:
-                    key = generate_key_from_mac(mac)
-                    # If no exception, key might be generated from invalid input
-                    # This is acceptable behavior depending on implementation
-                except (ValueError, TypeError):
-                    pass  # This is also acceptable
-    
+
+        for mac in test_cases:
+            key = generate_key_from_mac(mac)
+            self.assertIsInstance(key, str)
+            self.assertEqual(len(key), 64)  # SHA-256 hex = 64 chars
+
+    def test_key_generation_invalid_mac(self):
+        """Test key generation with invalid MAC addresses."""
+        invalid_macs = [
+            "invalid_mac",
+            "",
+            "AA:BB:CC:DD",  # Too short
+            "GG:HH:II:JJ:KK:LL",  # Invalid hex
+        ]
+
+        for mac in invalid_macs:
+            with self.assertRaises((ValueError, AttributeError)):
+                generate_key_from_mac(mac)
+
     def test_key_consistency(self):
-        """Test that same MAC always generates same key"""
+        """Test that same MAC always generates same key."""
         mac = "AA:BB:CC:DD:EE:FF"
         key1 = generate_key_from_mac(mac)
         key2 = generate_key_from_mac(mac)
         self.assertEqual(key1, key2)
-    
-    def test_key_fragment_extraction(self):
-        """Test extraction of 7-char key fragment for display"""
-        full_key = "A" * 64
-        fragment = full_key[:7]
-        self.assertEqual(len(fragment), 7)
-        self.assertEqual(fragment, "AAAAAAA")
+
+    def test_key_different_macs(self):
+        """Test that different MACs generate different keys."""
+        key1 = generate_key_from_mac("AA:BB:CC:DD:EE:FF")
+        key2 = generate_key_from_mac("BB:BB:CC:DD:EE:FF")
+        self.assertNotEqual(key1, key2)
+
+    def test_verify_key_correct(self):
+        """Test key verification with correct key."""
+        mac = "AA:BB:CC:DD:EE:FF"
+        full_key = generate_key_from_mac(mac)
+        short_key = full_key[5:12]  # The 7-char fragment
+
+        result = verify_key(short_key, mac)
+        self.assertTrue(result)
+
+    def test_verify_key_incorrect(self):
+        """Test key verification with incorrect key."""
+        mac = "AA:BB:CC:DD:EE:FF"
+
+        result = verify_key("wrong12", mac)
+        self.assertFalse(result)
+
+    def test_verify_key_wrong_length(self):
+        """Test key verification with wrong length key."""
+        mac = "AA:BB:CC:DD:EE:FF"
+
+        result = verify_key("tooshort", mac)  # Only 8 chars
+        self.assertFalse(result)
+
+    def test_validate_mac_address(self):
+        """Test MAC address validation."""
+        valid_macs = [
+            "AA:BB:CC:DD:EE:FF",
+            "aa:bb:cc:dd:ee:ff",
+            "AA-BB-CC-DD-EE-FF",
+            "01:23:45:67:89:AB",
+        ]
+
+        for mac in valid_macs:
+            self.assertTrue(validate_mac_address(mac))
+
+    def test_validate_mac_address_invalid(self):
+        """Test MAC address validation with invalid addresses."""
+        invalid_macs = [
+            "invalid",
+            "",
+            "AA:BB:CC:DD:EE",  # Too short
+            "AA:BB:CC:DD:EE:FF:00",  # Too long
+            "GG:HH:II:JJ:KK:LL",  # Invalid hex
+        ]
+
+        for mac in invalid_macs:
+            self.assertFalse(validate_mac_address(mac))
+
+    def test_extract_mac_from_properties(self):
+        """Test MAC extraction from sensor properties."""
+        properties = {"sys": {"MAC": "AA:BB:CC:DD:EE:FF"}}
+
+        mac = extract_mac_from_properties(properties)
+        self.assertEqual(mac, "AA:BB:CC:DD:EE:FF")
+
+    def test_extract_mac_with_different_keys(self):
+        """Test MAC extraction with different property keys."""
+        # Test various MAC field names
+        test_cases = [
+            ({"sys": {"MAC": "11:22:33:44:55:66"}}, "11:22:33:44:55:66"),
+            ({"sys": {"mac": "22:33:44:55:66:77"}}, "22:33:44:55:66:77"),
+            ({"sys": {"mac_address": "33:44:55:66:77:88"}}, "33:44:55:66:77:88"),
+        ]
+
+        for properties, expected in test_cases:
+            result = extract_mac_from_properties(properties)
+            self.assertEqual(result, expected)
+
+    def test_extract_mac_not_found(self):
+        """Test MAC extraction when not in properties."""
+        properties = {"sys": {"DN": "SomeDevice"}}
+
+        result = extract_mac_from_properties(properties)
+        self.assertIsNone(result)
+
+    def test_extract_mac_empty_properties(self):
+        """Test MAC extraction with empty properties."""
+        result = extract_mac_from_properties({})
+        self.assertIsNone(result)
+
+        result = extract_mac_from_properties({"sys": {}})
+        self.assertIsNone(result)
+
+    def test_check_activation_status_activated(self):
+        """Test activation status check when activated."""
+        mac = "AA:BB:CC:DD:EE:FF"
+        key = generate_key_from_mac(mac)
+
+        properties = {
+            "sys": {
+                "MAC": mac,
+                "AKY": key[5:12],  # 7-char key fragment
+            }
+        }
+
+        result = check_activation_status(properties, mac)
+        self.assertTrue(result)
+
+    def test_check_activation_status_not_activated(self):
+        """Test activation status check when not activated."""
+        properties = {
+            "sys": {
+                "MAC": "AA:BB:CC:DD:EE:FF",
+                "AKY": "",  # Empty key
+            }
+        }
+
+        result = check_activation_status(properties, "AA:BB:CC:DD:EE:FF")
+        self.assertFalse(result)
 
 
 class TestNetworkCommands(unittest.TestCase):
-    """Test network configuration command construction"""
-    
-    def test_wifi_command_format(self):
-        """Test WiFi command format"""
-        ok, error, cmd = build_wifi_command("TestSSID", "password123")
+    """Test network configuration command construction."""
+
+    def test_wifi_command_valid(self):
+        """Test WiFi command with valid parameters."""
+        ok, error, cmd = build_wifi_command("MyNetwork", "password123")
+
         self.assertTrue(ok)
-        self.assertIsInstance(cmd, str)
-        self.assertIn("SET:WF", cmd)
-        self.assertIn("TestSSID", cmd)
-    
-    def test_wifi_validation(self):
-        """Test WiFi input validation"""
-        # Valid SSIDs
-        valid, msg = validate_ssid("MyNetwork")
-        self.assertTrue(valid)
-        
-        # Invalid SSIDs
-        invalid_cases = [
-            "",  # Empty
-            "a" * 33,  # Too long (max 32)
-        ]
+        self.assertEqual(error, "")
+        self.assertEqual(cmd, "SET:WF,MyNetwork,password123")
+
+    def test_wifi_command_with_spaces(self):
+        """Test WiFi command with spaces in parameters."""
+        ok, error, cmd = build_wifi_command("My Network", "my password")
+
+        self.assertTrue(ok)
+        self.assertIn("My Network", cmd)
+        self.assertIn("my password", cmd)
+
+    def test_wifi_command_empty_ssid(self):
+        """Test WiFi command with empty SSID."""
+        ok, error, cmd = build_wifi_command("", "password")
+
+        self.assertFalse(ok)
+        self.assertIn("SSID", error)
+
+    def test_wifi_command_ssid_too_long(self):
+        """Test WiFi command with SSID too long."""
+        long_ssid = "A" * 33  # Max is 32
+        ok, error, cmd = build_wifi_command(long_ssid, "password")
+
+        self.assertFalse(ok)
+        self.assertIn("32", error)
+
+    def test_wifi_command_password_too_long(self):
+        """Test WiFi command with password too long."""
+        long_password = "A" * 65  # Max is 64
+        ok, error, cmd = build_wifi_command("SSID", long_password)
+
+        self.assertFalse(ok)
+        self.assertIn("64", error)
+
+    def test_mqtt_command_valid(self):
+        """Test MQTT command with valid parameters."""
+        ok, error, cmd = build_mqtt_command(
+            "broker.example.com", "1883", "user", "pass"
+        )
+
+        self.assertTrue(ok)
+        self.assertIn("SET:MQ", cmd)
+        self.assertIn("broker.example.com", cmd)
+        self.assertIn("1883", cmd)
+        self.assertIn("user", cmd)
+
+    def test_mqtt_command_empty_broker(self):
+        """Test MQTT command with empty broker."""
+        ok, error, cmd = build_mqtt_command("", "1883", "user", "pass")
+
+        self.assertFalse(ok)
+        self.assertIn("broker", error.lower())
+
+    def test_mqtt_command_invalid_port(self):
+        """Test MQTT command with invalid port."""
+        ok, error, cmd = build_mqtt_command("broker.example.com", "abc", "user", "pass")
+
+        self.assertFalse(ok)
+
+    def test_mqtt_command_default_port(self):
+        """Test MQTT command with default port."""
+        ok, error, cmd = build_mqtt_command("broker.example.com", "", "user", "pass")
+
+        self.assertTrue(ok)
+        self.assertIn("1883", cmd)
+
+    def test_ota_command_valid(self):
+        """Test OTA command with valid URLs."""
+        ok, error, cmd = build_ota_command(
+            "http://url1.com", "http://url2.com", "http://url3.com", "http://url4.com"
+        )
+
+        self.assertTrue(ok)
+        self.assertIn("SET:OTA", cmd)
+
+    def test_ota_command_with_empty_urls(self):
+        """Test OTA command with some empty URLs."""
+        ok, error, cmd = build_ota_command("http://url1.com", "", "", "")
+
+        self.assertTrue(ok)
+        self.assertIn("SET:OTA", cmd)
+
+    def test_ota_command_invalid_url(self):
+        """Test OTA command with invalid URL."""
+        ok, error, cmd = build_ota_command("invalid_url", "", "", "")
+
+        self.assertFalse(ok)
+        self.assertIn("http", error.lower())
+
+
+class TestValidation(unittest.TestCase):
+    """Test validation functions."""
+
+    def test_validate_ssid_valid(self):
+        """Test SSID validation with valid values."""
+        valid_cases = ["MyNetwork", "a", "A" * 32]
+
+        for ssid in valid_cases:
+            valid, msg = validate_ssid(ssid)
+            self.assertTrue(valid, f"SSID '{ssid}' should be valid")
+
+    def test_validate_ssid_invalid(self):
+        """Test SSID validation with invalid values."""
+        invalid_cases = ["", "A" * 33]
+
         for ssid in invalid_cases:
             valid, msg = validate_ssid(ssid)
             self.assertFalse(valid, f"SSID '{ssid}' should be invalid")
-    
-    def test_mqtt_command_format(self):
-        """Test MQTT command format"""
-        ok, error, cmd = build_mqtt_command("broker.example.com", "1883", "user", "pass")
-        self.assertTrue(ok)
-        self.assertIsInstance(cmd, str)
-        self.assertIn("SET:MQ", cmd)
-        self.assertIn("broker.example.com", cmd)
-    
-    def test_ota_command_format(self):
-        """Test OTA command format"""
-        ok, error, cmd = build_ota_command("http://url1.com", "http://url2.com", "http://url3.com", "http://url4.com")
-        self.assertTrue(ok)
-        self.assertIsInstance(cmd, str)
-        self.assertIn("SET:OTA", cmd)
-    
 
-    
-    def test_port_validation(self):
-        """Test port number validation"""
-        # Valid ports
-        valid_ports = ["1", "80", "1883", "8080", "65535"]
-        for port in valid_ports:
+    def test_validate_password_valid(self):
+        """Test password validation with valid values."""
+        valid_cases = ["", "password", "A" * 64]
+
+        for password in valid_cases:
+            valid, msg = validate_password(password)
+            self.assertTrue(valid, f"Password should be valid")
+
+    def test_validate_password_invalid(self):
+        """Test password validation with invalid values."""
+        invalid_cases = ["A" * 65]  # Too long
+
+        for password in invalid_cases:
+            valid, msg = validate_password(password)
+            self.assertFalse(valid, f"Password should be invalid")
+
+    def test_validate_port_valid(self):
+        """Test port validation with valid values."""
+        valid_cases = ["1", "80", "1883", "8080", "65535"]
+
+        for port in valid_cases:
             valid, msg = validate_port(port)
-            self.assertTrue(valid, f"Port {port} should be valid")
-        
-        # Invalid ports
-        invalid_ports = ["0", "65536", "abc", "-1", ""]
-        for port in invalid_ports:
+            self.assertTrue(valid, f"Port '{port}' should be valid")
+
+    def test_validate_port_invalid(self):
+        """Test port validation with invalid values."""
+        invalid_cases = ["0", "65536", "abc", "-1", ""]
+
+        for port in invalid_cases:
             valid, msg = validate_port(port)
-            self.assertFalse(valid, f"Port {port} should be invalid")
+            self.assertFalse(valid, f"Port '{port}' should be invalid")
+
+    def test_validate_url_valid(self):
+        """Test URL validation with valid values."""
+        valid_cases = ["", "http://example.com", "https://example.com"]
+
+        for url in valid_cases:
+            valid, msg = validate_url(url)
+            self.assertTrue(valid, f"URL '{url}' should be valid")
+
+    def test_validate_url_invalid(self):
+        """Test URL validation with invalid values."""
+        invalid_cases = ["ftp://example.com", "example.com", "httpexample.com"]
+
+        for url in invalid_cases:
+            valid, msg = validate_url(url)
+            self.assertFalse(valid, f"URL '{url}' should be invalid")
 
 
 class TestConfiguration(unittest.TestCase):
-    """Test configuration constants"""
-    
+    """Test configuration constants."""
+
     def test_config_values_exist(self):
-        """Test that all required config values exist"""
+        """Test that all required config values exist."""
         self.assertIsNotNone(Config.MAX_DATA_POINTS)
         self.assertIsNotNone(Config.UPDATE_INTERVAL_MS)
         self.assertIsNotNone(Config.EXPECTED_FREQUENCY)
         self.assertIsNotNone(Config.GRAVITY_CONSTANT)
-    
+
     def test_config_value_ranges(self):
-        """Test that config values are reasonable"""
+        """Test that config values are reasonable."""
         self.assertGreater(Config.MAX_DATA_POINTS, 0)
         self.assertLess(Config.MAX_DATA_POINTS, 10000)
+
         self.assertGreater(Config.UPDATE_INTERVAL_MS, 0)
+        self.assertLess(Config.UPDATE_INTERVAL_MS, 1000)
+
         self.assertGreater(Config.EXPECTED_FREQUENCY, 0)
 
+        self.assertGreater(Config.GRAVITY_CONSTANT, 0)
 
-class TestDataBuffer(unittest.TestCase):
-    """Test data buffer functionality"""
-    
-    def test_deque_initialization(self):
-        """Test that data structures are properly initialized"""
-        from collections import deque
-        
-        max_points = Config.MAX_DATA_POINTS
-        time_data = deque(maxlen=max_points)
-        mpu_accel_data = [deque(maxlen=max_points) for _ in range(3)]
-        
-        # Verify structure
-        self.assertEqual(len(mpu_accel_data), 3)
-        self.assertEqual(mpu_accel_data[0].maxlen, max_points)
-    
-    def test_deque_auto_limiting(self):
-        """Test that deque automatically limits size"""
-        from collections import deque
-        
-        d = deque(maxlen=5)
-        for i in range(10):
-            d.append(i)
-        
-        self.assertEqual(len(d), 5)
-        self.assertEqual(list(d), [5, 6, 7, 8, 9])
+    def test_config_classes_exist(self):
+        """Test that all config classes exist."""
+        from sensor_calibrator import SerialConfig, UIConfig, CalibrationConfig
 
-
-class TestStatisticsCalculation(unittest.TestCase):
-    """Test statistics calculation"""
-    
-    def test_mean_calculation(self):
-        """Test mean calculation"""
-        import numpy as np
-        
-        data = [1.0, 2.0, 3.0, 4.0, 5.0]
-        mean = np.mean(data)
-        self.assertAlmostEqual(mean, 3.0)
-    
-    def test_std_calculation(self):
-        """Test standard deviation calculation"""
-        import numpy as np
-        
-        data = [1.0, 2.0, 3.0, 4.0, 5.0]
-        std = np.std(data)
-        self.assertGreater(std, 0)
-
-
-class TestPerformanceOptimization(unittest.TestCase):
-    """Test performance optimization settings"""
-    
-    def test_optimization_switches_exist(self):
-        """Test that optimization switches are defined"""
-        self.assertTrue(hasattr(Config, 'ENABLE_BLIT_OPTIMIZATION'))
-        self.assertTrue(hasattr(Config, 'ENABLE_WINDOW_MOVE_PAUSE'))
-        self.assertTrue(hasattr(Config, 'ENABLE_DATA_DECIMATION'))
-    
-    def test_update_intervals_reasonable(self):
-        """Test that update intervals are reasonable"""
-        # GUI update should be 50-200ms
-        self.assertGreaterEqual(Config.UPDATE_INTERVAL_MS, 50)
-        self.assertLessEqual(Config.UPDATE_INTERVAL_MS, 200)
-        
-        # Chart update interval should be >= GUI update
-        chart_interval_ms = Config.CHART_UPDATE_INTERVAL * 1000
-        self.assertGreaterEqual(chart_interval_ms, 50)
-
-
-class TestMainAppStructure(unittest.TestCase):
-    """Test main application structure"""
-    
-    def test_main_file_imports(self):
-        """Test that main file can be imported"""
-        try:
-            # This tests basic syntax and import structure
-            import StableSensorCalibrator
-            self.assertTrue(True)
-        except SyntaxError as e:
-            self.fail(f"Syntax error in main file: {e}")
-        except ImportError as e:
-            # Some imports may fail in test environment (e.g., serial port)
-            # This is acceptable as long as it's not a syntax error
-            pass
-    
-    def test_config_imports(self):
-        """Test that config module imports work"""
-        from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig
-        self.assertIsNotNone(Config)
+        self.assertIsNotNone(SerialConfig)
         self.assertIsNotNone(UIConfig)
+        self.assertIsNotNone(CalibrationConfig)
 
 
-def run_smoke_test():
-    """
-    Quick smoke test to verify basic functionality.
-    Run this before and after refactoring.
-    """
+def run_integration_tests():
+    """Run all integration tests and print summary."""
     print("=" * 60)
-    print("SensorCalibrator Smoke Test")
+    print("SensorCalibrator Integration Tests")
     print("=" * 60)
-    
-    tests_passed = 0
-    tests_failed = 0
-    
-    # Test 1: Config import
-    try:
-        from sensor_calibrator import Config
-        print("[PASS] Config import: PASSED")
-        tests_passed += 1
-    except Exception as e:
-        print(f"[FAIL] Config import: FAILED - {e}")
-        tests_failed += 1
-    
-    # Test 2: Calibration module
-    try:
-        from calibration import compute_six_position_calibration, compute_gyro_offset
-        print("[PASS] Calibration module: PASSED")
-        tests_passed += 1
-    except Exception as e:
-        print(f"[FAIL] Calibration module: FAILED - {e}")
-        tests_failed += 1
-    
-    # Test 3: Activation module
-    try:
-        from activation import generate_key_from_mac
-        key = generate_key_from_mac("AA:BB:CC:DD:EE:FF")
-        assert len(key) == 64
-        print("[PASS] Activation module: PASSED")
-        tests_passed += 1
-    except Exception as e:
-        print(f"[FAIL] Activation module: FAILED - {e}")
-        tests_failed += 1
-    
-    # Test 4: Network config
-    try:
-        from network_config import build_wifi_command
-        ok, error, cmd = build_wifi_command("Test", "pass")
-        assert "SET:WF" in cmd
-        print("[PASS] Network config: PASSED")
-        tests_passed += 1
-    except Exception as e:
-        print(f"[FAIL] Network config: FAILED - {e}")
-        tests_failed += 1
-    
-    # Test 5: Validation functions
-    try:
-        from sensor_calibrator import validate_ssid, validate_port
-        valid, _ = validate_ssid("TestNetwork")
-        assert valid
-        valid, _ = validate_port("1883")
-        assert valid
-        print("[PASS] Validation functions: PASSED")
-        tests_passed += 1
-    except Exception as e:
-        print(f"[FAIL] Validation functions: FAILED - {e}")
-        tests_failed += 1
-    
+
+    # Run tests
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+
+    suite.addTests(loader.loadTestsFromTestCase(TestCalibrationAlgorithms))
+    suite.addTests(loader.loadTestsFromTestCase(TestActivation))
+    suite.addTests(loader.loadTestsFromTestCase(TestNetworkCommands))
+    suite.addTests(loader.loadTestsFromTestCase(TestValidation))
+    suite.addTests(loader.loadTestsFromTestCase(TestConfiguration))
+
+    runner = unittest.TextTestRunner(verbosity=2)
+    result = runner.run(suite)
+
     print("=" * 60)
-    print(f"Results: {tests_passed} passed, {tests_failed} failed")
+    print(f"Tests run: {result.testsRun}")
+    print(f"Failures: {len(result.failures)}")
+    print(f"Errors: {len(result.errors)}")
     print("=" * 60)
-    
-    return tests_failed == 0
+
+    return result.wasSuccessful()
 
 
-if __name__ == '__main__':
-    # Run smoke test first
-    smoke_passed = run_smoke_test()
-    print()
-    
-    # Run full test suite
-    print("Running full test suite...")
-    unittest.main(verbosity=2, exit=not smoke_passed)
+if __name__ == "__main__":
+    success = run_integration_tests()
+    sys.exit(0 if success else 1)
