@@ -19,7 +19,7 @@ import atexit
 from collections import deque
 
 # Import configuration
-from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor
+from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor, SerialManager, NetworkManager, CalibrationWorkflow, ActivationWorkflow
 
 matplotlib.use("TkAgg")
 
@@ -392,6 +392,120 @@ class StableSensorCalibrator:
             'gravity_std': self.ui_manager.get_var('gravity_std'),
         }
 
+        # 初始化串口管理器
+        self._init_serial_manager()
+        
+        # 初始化网络管理器
+        self._init_network_manager()
+        
+        # 初始化校准工作流
+        self._init_calibration_workflow()
+        
+        # 初始化激活工作流
+        self._init_activation_workflow()
+
+    def _init_calibration_workflow(self):
+        """初始化校准工作流"""
+        callbacks = {
+            'log_message': self.log_message,
+            'parse_sensor_data': self.parse_sensor_data,
+            'on_position_captured': self._on_position_captured,
+            'on_calibration_finished': self._on_calibration_finished,
+            'on_calibration_error': self._on_calibration_error,
+            'on_capture_error': self._on_capture_error,
+        }
+        self.calibration_workflow = CalibrationWorkflow(self.data_queue, callbacks)
+    
+    def _on_position_captured(self, next_position: int):
+        """位置采集完成回调"""
+        self.current_position = next_position
+        self.capture_btn.config(state="normal")
+        self.update_position_display()
+    
+    def _on_calibration_finished(self, params: dict):
+        """校准完成回调"""
+        self.calibration_params = params
+        self.calibrate_btn.config(state="normal")
+        self.capture_btn.config(state="disabled")
+        self.data_btn.config(state="normal")
+        self.position_label.config(text="Calibration complete!")
+        self.log_message("Calibration finished successfully!")
+    
+    def _on_calibration_error(self):
+        """校准错误回调"""
+        self.reset_calibration_state()
+    
+    def _on_capture_error(self):
+        """采集错误回调"""
+        self.capture_btn.config(state="normal")
+    
+    def _init_activation_workflow(self):
+        """初始化激活工作流"""
+        callbacks = {
+            'log_message': self.log_message,
+            'get_serial_port': lambda: self.serial_manager.serial_port,
+            'is_connected': lambda: self.serial_manager.is_connected,
+            'is_reading': lambda: self.is_reading,
+            'stop_data_stream': self.stop_data_stream,
+            'start_data_stream': self.start_data_stream,
+            'send_ss8_command': self.send_ss8_get_properties,
+            'update_activation_status': self.update_activation_status,
+        }
+        self.activation_workflow = ActivationWorkflow(callbacks)
+
+    def _init_network_manager(self):
+        """初始化网络管理器"""
+        callbacks = {
+            'log_message': self.log_message,
+            'read_sensor_properties': self.read_sensor_properties,
+            'start_data_stream': self.start_data_stream,
+            'stop_data_stream': self.stop_data_stream,
+            'enable_config_buttons': self.enable_config_buttons,
+            'on_wifi_loaded': self._on_wifi_config_loaded,
+            'on_mqtt_loaded': self._on_mqtt_config_loaded,
+        }
+        self.network_manager = NetworkManager(self.serial_manager, callbacks)
+        
+        # 同步初始配置
+        self.network_manager.wifi_params = self.wifi_params
+        self.network_manager.mqtt_params = self.mqtt_params
+        self.network_manager.ota_params = self.ota_params
+    
+    def _on_wifi_config_loaded(self, params: dict):
+        """WiFi配置加载回调"""
+        self.ssid_var.set(params.get('ssid', ''))
+        self.password_var.set(params.get('password', ''))
+        self.wifi_params = params
+    
+    def _on_mqtt_config_loaded(self, params: dict):
+        """MQTT配置加载回调"""
+        self.mqtt_broker_var.set(params.get('broker', ''))
+        self.mqtt_user_var.set(params.get('username', ''))
+        self.mqtt_password_var.set(params.get('password', ''))
+        self.mqtt_port_var.set(params.get('port', '1883'))
+        self.mqtt_params = params
+
+    def _init_serial_manager(self):
+        """初始化串口管理器"""
+        callbacks = {
+            'log_message': self.log_message,
+            'get_data_queue': lambda: self.data_queue,
+            'on_data_received': None,  # 可选：如果需要实时处理
+            'update_connection_state': self._on_connection_state_changed,
+        }
+        self.serial_manager = SerialManager(callbacks)
+        
+        # 保持向后兼容的引用
+        self.ser = None  # 将通过 serial_manager.serial_port 访问
+    
+    def _on_connection_state_changed(self, connected: bool):
+        """串口连接状态变化回调"""
+        # 更新按钮状态等
+        if connected:
+            self.ser = self.serial_manager.serial_port
+        else:
+            self.ser = None
+
     def schedule_update_gui(self):
         """调度GUI更新 - 安全版本"""
         if not self.exiting:
@@ -555,173 +669,49 @@ class StableSensorCalibrator:
             self.gravity_mag_data.clear()
 
     def set_wifi_config(self):
-        """设置WiFi配置"""
-        if not self.ser or not self.ser.is_open:
-            self.log_message("Error: Not connected to serial port!")
-            return
-
+        """设置WiFi配置 - 委托给 NetworkManager"""
         ssid = self.ssid_var.get().strip()
         password = self.password_var.get().strip()
-
-        if not ssid:
-            self.log_message("Error: WiFi SSID cannot be empty!")
-            return
-
-        # 构建WiFi设置命令
-        wifi_cmd = f"SET:WF,{ssid},{password}"
-
-        self.log_message(f"Setting WiFi configuration: SSID={ssid}")
-
-        # 在新线程中发送命令
-        threading.Thread(
-            target=self.send_config_command, args=(wifi_cmd, "WiFi"), daemon=True
-        ).start()
+        
+        if self.network_manager.set_wifi_config(ssid, password):
+            self.wifi_params = {"ssid": ssid, "password": password}
 
     def set_ota_config(self):
-        """设置OTA配置"""
-        if not self.ser or not self.ser.is_open:
-            self.log_message("Error: Not connected to serial port!")
-            return
-
-        URL1 = self.URL1_var.get().strip()
-        URL2 = self.URL2_var.get().strip()
-        URL3 = self.URL3_var.get().strip()
-        URL4 = self.URL4_var.get().strip()
-
-        # 构建MQTT设置命令
-        OTA_cmd = f"SET:OTA,{URL1},{URL2},{URL3},{URL4}"
-
-        self.log_message(f"Setting OTA configuration: OTA={URL1},{URL2},{URL3},{URL4}")
-
-        # 在新线程中发送命令
-        threading.Thread(
-            target=self.send_config_command, args=(OTA_cmd, "OTA"), daemon=True
-        ).start()
+        """设置OTA配置 - 委托给 NetworkManager"""
+        url1 = self.URL1_var.get().strip()
+        url2 = self.URL2_var.get().strip()
+        url3 = self.URL3_var.get().strip()
+        url4 = self.URL4_var.get().strip()
+        
+        if self.network_manager.set_ota_config(url1, url2, url3, url4):
+            self.ota_params = {"URL1": url1, "URL2": url2, "URL3": url3, "URL4": url4}
 
     def set_mqtt_config(self):
-        """设置MQTT配置"""
-        if not self.ser or not self.ser.is_open:
-            self.log_message("Error: Not connected to serial port!")
-            return
-
+        """设置MQTT配置 - 委托给 NetworkManager"""
         broker = self.mqtt_broker_var.get().strip()
         username = self.mqtt_user_var.get().strip()
         password = self.mqtt_password_var.get().strip()
         port = self.mqtt_port_var.get().strip()
-
-        if not broker:
-            self.log_message("Error: MQTT broker address cannot be empty!")
-            return
-
-        if not port:
-            port = "1883"
-
-        # 构建MQTT设置命令
-        mqtt_cmd = f"SET:MQ,{broker},{port},{username},{password}"
-
-        self.log_message(f"Setting MQTT configuration: Broker={broker}, Port={port}")
-
-        # 在新线程中发送命令
-        threading.Thread(
-            target=self.send_config_command, args=(mqtt_cmd, "MQTT"), daemon=True
-        ).start()
-
-    def send_config_command(self, command, config_type):
-        """发送配置命令"""
-        try:
-            # 停止数据流（如果正在运行）
-            original_reading_state = self.is_reading
-            if self.is_reading:
-                self.root.after(
-                    0,
-                    lambda: self.log_message(
-                        f"Stopping data stream for {config_type} configuration..."
-                    ),
-                )
-                self.root.after(0, self.stop_data_stream)
-                time.sleep(1.0)
-
-            # 清空输入缓冲区
-            self.ser.reset_input_buffer()
-            time.sleep(Config.BUFFER_CLEAR_DELAY)
-
-            # 发送配置命令
-            full_cmd = f"{command}"
-            self.ser.write(full_cmd.encode())
-            self.ser.flush()
-
-            self.root.after(0, lambda: self.log_message(f"Sent: {command}"))
-
-            # 等待响应
-            time.sleep(2.0)
-
-            # 读取响应
-            response_bytes = b""
-            start_time = time.time()
-            timeout = 5.0
-
-            while time.time() - start_time < timeout:
-                if self.ser.in_waiting > 0:
-                    response_bytes += self.ser.read(self.ser.in_waiting)
-
-                response_str = response_bytes.decode("utf-8", errors="ignore")
-
-                if "success" in response_str.lower() or "ok" in response_str.lower():
-                    self.root.after(
-                        0,
-                        lambda: self.log_message(
-                            f"{config_type} configuration successful!"
-                        ),
-                    )
-                    break
-
-                time.sleep(Config.THREAD_ERROR_DELAY)
-
-            if not response_bytes:
-                self.root.after(
-                    0,
-                    lambda: self.log_message(
-                        f"{config_type} configuration sent (no response)"
-                    ),
-                )
-            else:
-                # 显示响应内容
-                response_text = response_str.strip()
-                if response_text:
-                    self.root.after(
-                        0, lambda: self.log_message(f"Response: {response_text}")
-                    )
-
-            # 恢复数据流状态
-            if original_reading_state and not self.is_reading:
-                self.root.after(
-                    0, lambda: self.log_message("Restarting data stream...")
-                )
-                time.sleep(1.0)
-                self.root.after(0, self.start_data_stream)
-
-        except Exception as e:
-            self.root.after(
-                0,
-                lambda: self.log_message(
-                    f"Error setting {config_type} configuration: {str(e)}"
-                ),
-            )
+        
+        if self.network_manager.set_mqtt_config(broker, username, password, port):
+            self.mqtt_params = {
+                "broker": broker,
+                "username": username,
+                "password": password,
+                "port": port or "1883",
+            }
 
     def read_wifi_config(self):
-        """读取WiFi配置"""
-        self.log_message("Reading WiFi configuration from device...")
-        self.read_sensor_properties()
+        """读取WiFi配置 - 委托给 NetworkManager"""
+        self.network_manager.read_wifi_config()
 
     def read_mqtt_config(self):
-        """读取MQTT配置"""
-        self.log_message("Reading MQTT configuration from device...")
-        self.read_sensor_properties()
+        """读取MQTT配置 - 委托给 NetworkManager"""
+        self.network_manager.read_mqtt_config()
 
     def read_ota_config(self):
-        """读取OTA配置"""
-        self.log_message("Reading MQTT configuration from device...")
-        self.read_sensor_properties()
+        """读取OTA配置 - 委托给 NetworkManager"""
+        self.network_manager.read_ota_config()
 
     def set_coordinate_mode(self, mode: int, mode_name: str) -> None:
         """设置坐标模式
@@ -730,19 +720,12 @@ class StableSensorCalibrator:
             mode: 模式编号 (2=局部坐标, 3=整体坐标)
             mode_name: 模式名称（用于日志显示）
         """
-        if not self.ser or not self.ser.is_open:
-            self.log_message("Error: Not connected to serial port!")
-            return
-
-        try:
-            command = f"SS:{mode}\n".encode()
-            self.ser.write(command)
-            self.ser.flush()
-            self.log_message(f"Sent: SS:{mode} ({mode_name})")
-        except serial.SerialException as e:
-            self.log_message(f"Serial error sending coordinate command: {str(e)}")
-        except Exception as e:
-            self.log_message(f"Unexpected error: {str(e)}")
+        if mode == 2:
+            self.serial_manager.send_ss2_local_mode(mode_name)
+        elif mode == 3:
+            self.serial_manager.send_ss3_global_mode(mode_name)
+        else:
+            self.serial_manager.send_ss_command(mode, mode_name)
 
     def set_local_coordinate_mode(self) -> None:
         """设置局部坐标模式 - 发送 SS:2 指令"""
@@ -754,111 +737,48 @@ class StableSensorCalibrator:
 
     def send_ss_command(self, cmd_id: int, description: str = "",
                         log_success: bool = True, silent: bool = False) -> bool:
-        """发送 SS 指令的通用方法
-
-        Args:
-            cmd_id: 指令编号 (0-9)
-            description: 指令描述（用于日志）
-            log_success: 是否记录成功日志
-            silent: 是否静默模式（不记录错误日志）
-
-        Returns:
-            bool: 发送是否成功
-        """
-        if not self.ser or not self.ser.is_open:
-            if not silent:
-                self.log_message("Error: Not connected to serial port!")
-            return False
-
-        try:
-            command = f"SS:{cmd_id}\n".encode()
-            self.ser.write(command)
-            self.ser.flush()
-            if log_success and not silent:
-                self.log_message(f"Sent: SS:{cmd_id}" + (f" ({description})" if description else ""))
-            return True
-        except serial.SerialException as e:
-            if not silent:
-                self.log_message(f"Serial error sending SS:{cmd_id}: {str(e)}")
-            return False
-        except Exception as e:
-            if not silent:
-                self.log_message(f"Unexpected error sending SS:{cmd_id}: {str(e)}")
-            return False
+        """发送 SS 指令的通用方法 - 委托给 SerialManager"""
+        return self.serial_manager.send_ss_command(cmd_id, description, log_success, silent)
 
     def send_ss0_start_stream(self) -> bool:
         """发送 SS:0 指令 - 开始数据流"""
-        return self.send_ss_command(0, "Start Data Stream")
+        return self.serial_manager.send_ss0_start_stream()
 
     def send_ss1_start_calibration(self) -> bool:
         """发送 SS:1 指令 - 开始校准流"""
-        return self.send_ss_command(1, "Start Calibration Stream")
+        return self.serial_manager.send_ss1_start_calibration()
 
     def send_ss4_stop_stream(self) -> bool:
         """发送 SS:4 指令 - 停止数据流/校准"""
-        return self.send_ss_command(4, "Stop Stream")
+        return self.serial_manager.send_ss4_stop_stream()
 
     def send_ss8_get_properties(self) -> bool:
         """发送 SS:8 指令 - 获取传感器属性"""
-        return self.send_ss_command(8, "Get Sensor Properties")
+        return self.serial_manager.send_ss8_get_properties()
 
     def extract_network_config(self):
-        """从传感器属性中提取网络配置"""
-        if not self.sensor_properties:
-            return
-        # 提取WiFi配置
-        if "sys" in self.sensor_properties:
-            sys_info = self.sensor_properties["sys"]
-
-            # WiFi配置
-            ssid = sys_info.get("SSID", "")
-            password = sys_info.get("PA", "")
-
-            if ssid:
-                self.ssid_var.set(ssid)
-                self.wifi_params["ssid"] = ssid
-            if password:
-                self.password_var.set(password)
-                self.wifi_params["password"] = password
-
-            # MQTT配置
-            broker = sys_info.get("MBR", "")
-            port = sys_info.get("MPT", "1883")
-            username = sys_info.get("MUS", "")
-            password = sys_info.get("MPW", "")
-
-            URL1 = sys_info.get("URL1", "")
-            URL2 = sys_info.get("URL2", "")
-            URL3 = sys_info.get("URL3", "")
-            URL4 = sys_info.get("URL4", "")
-
-            if broker:
-                self.mqtt_broker_var.set(broker)
-                self.mqtt_params["broker"] = broker
-            if username:
-                self.mqtt_user_var.set(username)
-                self.mqtt_params["username"] = username
-            if password:
-                self.mqtt_password_var.set(password)
-                self.mqtt_params["password"] = password
-            if port:
-                self.mqtt_port_var.set(str(port))
-                self.mqtt_params["port"] = str(port)
-
-            if URL1:
-                self.URL1_var.set(URL1)
-                self.ota_params["URL1"] = URL1
-            if URL2:
-                self.URL2_var.set(URL2)
-                self.ota_params["URL2"] = URL2
-            if URL3:
-                self.URL3_var.set(URL3)
-                self.ota_params["URL3"] = URL3
-            if URL4:
-                self.URL4_var.set(URL4)
-                self.ota_params["URL4"] = URL4
-            # 启用设置按钮
-            self.root.after(0, self.enable_config_buttons)
+        """从传感器属性中提取网络配置 - 委托给 NetworkManager"""
+        config = self.network_manager.extract_network_config(self.sensor_properties)
+        
+        # 同步回主类
+        self.wifi_params = self.network_manager.wifi_params
+        self.mqtt_params = self.network_manager.mqtt_params
+        self.ota_params = self.network_manager.ota_params
+        
+        # 更新UI变量
+        if self.wifi_params.get('ssid'):
+            self.ssid_var.set(self.wifi_params['ssid'])
+            self.password_var.set(self.wifi_params.get('password', ''))
+        if self.mqtt_params.get('broker'):
+            self.mqtt_broker_var.set(self.mqtt_params['broker'])
+            self.mqtt_user_var.set(self.mqtt_params.get('username', ''))
+            self.mqtt_password_var.set(self.mqtt_params.get('password', ''))
+            self.mqtt_port_var.set(self.mqtt_params.get('port', '1883'))
+        if self.ota_params.get('URL1') or self.ota_params.get('URL2'):
+            self.URL1_var.set(self.ota_params.get('URL1', ''))
+            self.URL2_var.set(self.ota_params.get('URL2', ''))
+            self.URL3_var.set(self.ota_params.get('URL3', ''))
+            self.URL4_var.set(self.ota_params.get('URL4', ''))
 
     def enable_config_buttons(self):
         """启用配置按钮"""
@@ -880,92 +800,22 @@ class StableSensorCalibrator:
             self.global_coord_btn.config(state="normal")
 
     def display_network_summary(self):
-        """显示网络配置摘要"""
-        if not self.sensor_properties:
-            return
-
-        self.log_message("\n" + "=" * 50)
-        self.log_message("NETWORK CONFIGURATION SUMMARY")
-        self.log_message("=" * 50)
-
-        if "sys" in self.sensor_properties:
-            sys_info = self.sensor_properties["sys"]
-
-            # WiFi信息
-            ssid = sys_info.get("SSID", "Not set")
-            self.log_message(f"WiFi SSID: {ssid}")
-            self.log_message(
-                f"WiFi Password: {'*' * 8 if sys_info.get('PA') else 'Not set'}"
-            )
-
-            # MQTT信息
-            broker = sys_info.get("MBR", "Not set")
-            username = sys_info.get("MUS", "Not set")
-            port = sys_info.get("MPT", "Not set")
-
-            self.log_message(f"MQTT Broker: {broker}")
-            self.log_message(f"MQTT Username: {username}")
-            self.log_message(f"MQTT Port: {port}")
-            self.log_message(
-                f"MQTT Password: {'*' * 8 if sys_info.get('MPW') else 'Not set'}"
-            )
-
-        self.log_message("=" * 50)
+        """显示网络配置摘要 - 委托给 NetworkManager"""
+        self.network_manager.display_network_summary(self.sensor_properties)
 
     def save_network_config(self):
-        """保存网络配置到文件"""
-        try:
-            config_data = {
-                "timestamp": datetime.now().isoformat(),
-                "wifi_config": self.wifi_params,
-                "mqtt_config": self.mqtt_params,
-            }
-
-            filename = filedialog.asksaveasfilename(
-                defaultextension=".json",
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-                initialfile=f"network_config_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-            )
-
-            if filename:
-                with open(filename, "w", encoding="utf-8") as f:
-                    json.dump(config_data, f, indent=2, ensure_ascii=False)
-
-                self.log_message(f"Network configuration saved to: {filename}")
-
-        except Exception as e:
-            self.log_message(f"Error saving network configuration: {str(e)}")
+        """保存网络配置到文件 - 委托给 NetworkManager"""
+        # 先同步参数到 network_manager
+        self.network_manager.wifi_params = self.wifi_params
+        self.network_manager.mqtt_params = self.mqtt_params
+        self.network_manager.save_network_config()
 
     def load_network_config(self):
-        """从文件加载网络配置"""
-        try:
-            filename = filedialog.askopenfilename(
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
-            )
-
-            if filename:
-                with open(filename, "r", encoding="utf-8") as f:
-                    config_data = json.load(f)
-
-                # 加载WiFi配置
-                if "wifi_config" in config_data:
-                    wifi_config = config_data["wifi_config"]
-                    self.ssid_var.set(wifi_config.get("ssid", ""))
-                    self.password_var.set(wifi_config.get("password", ""))
-
-                # 加载MQTT配置
-                if "mqtt_config" in config_data:
-                    mqtt_config = config_data["mqtt_config"]
-                    self.mqtt_broker_var.set(mqtt_config.get("broker", ""))
-                    self.mqtt_user_var.set(mqtt_config.get("username", ""))
-                    self.mqtt_password_var.set(mqtt_config.get("password", ""))
-                    self.mqtt_port_var.set(mqtt_config.get("port", "1883"))
-
-                self.log_message(f"Network configuration loaded from: {filename}")
-                self.enable_config_buttons()
-
-        except Exception as e:
-            self.log_message(f"Error loading network configuration: {str(e)}")
+        """从文件加载网络配置 - 委托给 NetworkManager"""
+        if self.network_manager.load_network_config():
+            # 同步回主类
+            self.wifi_params = self.network_manager.wifi_params
+            self.mqtt_params = self.network_manager.mqtt_params
 
     def setup_stats_grid(self, parent, sensor_name):
         """设置统计信息网格 - 修复键名生成"""
@@ -1018,13 +868,7 @@ class StableSensorCalibrator:
 
     def refresh_ports(self):
         """刷新可用串口列表"""
-        ports = []
-        try:
-            for port in serial.tools.list_ports.comports():
-                ports.append(port.device)
-        except:
-            pass
-
+        ports = SerialManager.list_available_ports()
         self.port_combo["values"] = ports
         if ports:
             self.port_combo.current(0)
@@ -1044,302 +888,150 @@ class StableSensorCalibrator:
 
     def toggle_connection(self):
         """切换串口连接"""
-        if self.ser is None or not self.ser.is_open:
-            self.connect_serial()
-        else:
+        port = self.port_var.get()
+        baudrate = int(self.baud_var.get())
+        
+        if self.serial_manager.is_connected:
             self.disconnect_serial()
+            self.connect_btn.config(text="Connect")
+            self.data_btn.config(state="disabled")
+            self.data_btn2.config(state="disabled")
+            self.read_props_btn.config(state="disabled")
+        else:
+            if self.serial_manager.connect(port, baudrate):
+                self.connect_btn.config(text="Disconnect")
+                self.data_btn.config(state="normal")
+                self.data_btn2.config(state="normal")
+                self.ser = self.serial_manager.serial_port
+        
         self.read_props_btn.config(state="normal")
 
     def connect_serial(self):
-        """连接串口 - 添加更好的状态管理"""
+        """连接串口 - 委托给 SerialManager"""
         port = self.port_var.get()
         baudrate = int(self.baud_var.get())
-
-        if not port:
-            self.log_message("Error: No port selected!")
-            return
-
-        try:
-            # 确保之前的状态被清理
-            if hasattr(self, "ser") and self.ser and self.ser.is_open:
-                self.disconnect_serial()
-                time.sleep(SerialConfig.DISCONNECT_DELAY)  # 等待断开完成
-
-            self.ser = serial.Serial(
-                port=port,
-                baudrate=baudrate,
-                timeout=SerialConfig.TIMEOUT,
-                write_timeout=SerialConfig.WRITE_TIMEOUT,
-                rtscts=SerialConfig.RTSCTS,  # 禁用硬件流控制
-                dsrdtr=SerialConfig.DSRDTR,  # 禁用硬件流控制
-            )
-
-            # 清空缓冲区
-            time.sleep(SerialConfig.CONNECT_DELAY)  # 等待串口稳定
-            self.ser.reset_input_buffer()
-            self.ser.reset_output_buffer()
-
+        
+        if self.serial_manager.connect(port, baudrate):
             self.connect_btn.config(text="Disconnect")
             self.data_btn.config(state="normal")
             self.data_btn2.config(state="normal")
-            self.log_message(f"Connected to {port} at {baudrate} baud")
-
-            # 重置数据流状态
-            self.is_reading = False
-            if hasattr(self, "data_btn"):
-                self.data_btn.config(text="Start Data Stream")
-
-            self.is_reading = False
-            if hasattr(self, "data_btn2"):
-                self.data_btn2.config(text="Start CAS Stream")
-
-        except Exception as e:
-            self.log_message(f"Error connecting to {port}: {str(e)}")
-            # 连接失败时确保状态正确
-            self.ser = None
-            if hasattr(self, "connect_btn"):
-                self.connect_btn.config(text="Connect")
-            if hasattr(self, "data_btn"):
-                self.data_btn.config(state="disabled")
-            if hasattr(self, "data_btn2"):
-                self.data_btn2.config(state="disabled")
+            self.ser = self.serial_manager.serial_port
 
     def disconnect_serial(self):
-        """断开串口连接"""
-        if self.is_reading:
-            self.stop_data_stream()
-
-        if self.ser and self.ser.is_open:
-            self.ser.close()
-
-        # 新增：禁用按钮
+        """断开串口连接 - 委托给 SerialManager"""
+        self.serial_manager.disconnect()
+        self.ser = None
+        
+        # 禁用按钮
+        self.connect_btn.config(text="Connect")
+        self.data_btn.config(text="Start Data Stream")
+        self.data_btn.config(state="disabled")
+        self.data_btn2.config(text="Start CAS Stream")
+        self.data_btn2.config(state="disabled")
         self.read_props_btn.config(state="disabled")
         self.resend_btn.config(state="disabled")
         if hasattr(self, "local_coord_btn"):
             self.local_coord_btn.config(state="disabled")
         if hasattr(self, "global_coord_btn"):
             self.global_coord_btn.config(state="disabled")
-
-        self.ser = None
-        self.connect_btn.config(text="Connect")
-        self.data_btn.config(text="Start Data Stream")
-        self.data_btn.config(state="disabled")
-        # self.monitor_btn.config(state="disabled")
         self.calibrate_btn.config(state="disabled")
         self.send_btn.config(state="disabled")
-        self.log_message("Disconnected from serial port")
 
     def toggle_data_stream(self):
-        """切换数据流状态 - 修复版本"""
-        if not self.ser or not self.ser.is_open:
+        """切换数据流状态"""
+        if not self.serial_manager.is_connected:
             self.log_message("Error: Not connected to serial port!")
             return
 
-        if not self.is_reading:
+        if not self.serial_manager.is_reading:
             self.start_data_stream()
         else:
             self.stop_data_stream()
 
     def toggle_data_stream2(self):
-        """切换数据流状态 - 修复版本"""
-        if not self.ser or not self.ser.is_open:
+        """切换校准流状态"""
+        if not self.serial_manager.is_connected:
             self.log_message("Error: Not connected to serial port!")
             return
 
-        if not self.is_reading:
+        if not self.serial_manager.is_reading:
             self.start_data_stream2()
         else:
             self.stop_data_stream2()
 
     def start_data_stream(self):
-        """开始数据流 - 修复版本"""
-        if self.ser and self.ser.is_open:
-            try:
-                if self.send_ss0_start_stream():
-                    # 设置状态标志
-                    self.is_reading = True
-                    self.data_btn.config(text="Stop Data Stream")
-                    self.calibrate_btn.config(state="normal")
-
-                    # 重置数据和时间
-                    self.clear_data()
-                    self.data_start_time = time.time()
-                    self.packet_count = 0
-                    self.packets_received = 0  # 重置包计数
-
-                    self.log_message("Data stream started with command: SS:0")
-
-                    # 启动串口读取线程
-                    self.serial_thread = threading.Thread(
-                        target=self.read_serial_data, daemon=True
-                    )
-                    self.serial_thread.start()
-
-                    # 确保GUI更新循环运行
-                    self.schedule_update_gui()
-            except Exception as e:
-                self.log_message(f"Error starting data stream: {str(e)}")
-                # 发生错误时重置状态
-                self.is_reading = False
-                self.data_btn.config(text="Start Data Stream")
-                self.data_btn.config(state="normal")
-        else:
-            self.log_message("Error: Not connected to serial port or port not open!")
+        """开始数据流"""
+        if not self.serial_manager.is_connected:
+            self.log_message("Error: Not connected to serial port!")
+            return
+            
+        if self.serial_manager.send_ss0_start_stream():
+            if self.serial_manager.start_reading():
+                self.is_reading = True
+                self.data_btn.config(text="Stop Data Stream")
+                self.calibrate_btn.config(state="normal")
+                
+                # 重置数据
+                self.clear_data()
+                self.data_start_time = time.time()
+                self.packet_count = 0
+                self.packets_received = 0
+                
+                # 启动GUI更新
+                self.schedule_update_gui()
 
     def start_data_stream2(self):
-        """开始数据流 - 修复版本"""
-        if self.ser and self.ser.is_open:
-            try:
-                if self.send_ss1_start_calibration():
-                    # 设置状态标志
-                    self.is_reading = True
-                    self.data_btn2.config(text="starting Calibration Stream")
-                    self.calibrate_btn.config(state="disabled")
-
-                    # 重置数据和时间
-                    self.clear_data()
-                    self.data_start_time = time.time()
-                    self.packet_count = 0
-                    self.packets_received = 0  # 重置包计数
-
-                    self.log_message("calibration stream started with command: SS:1")
-
-                    # 启动串口读取线程
-                    self.serial_thread = threading.Thread(
-                        target=self.read_serial_data, daemon=True
-                    )
-                    self.serial_thread.start()
-
-                    # 确保GUI更新循环运行
-                    self.schedule_update_gui()
-            except Exception as e:
-                self.log_message(f"Error starting data stream: {str(e)}")
-                # 发生错误时重置状态
-                self.is_reading = False
-                self.data_btn2.config(text="Start calibration Stream")
-                self.data_btn2.config(state="normal")
-        else:
-            self.log_message("Error: Not connected to serial port or port not open!")
+        """开始校准流"""
+        if not self.serial_manager.is_connected:
+            self.log_message("Error: Not connected to serial port!")
+            return
+            
+        if self.serial_manager.send_ss1_start_calibration():
+            if self.serial_manager.start_reading():
+                self.is_reading = True
+                self.data_btn2.config(text="Stop Calibration Stream")
+                self.calibrate_btn.config(state="disabled")
+                
+                # 重置数据
+                self.clear_data()
+                self.data_start_time = time.time()
+                self.packet_count = 0
+                self.packets_received = 0
+                
+                # 启动GUI更新
+                self.schedule_update_gui()
 
     def stop_data_stream(self):
-        """停止数据流 - 修复版本"""
-        if not hasattr(self, "is_reading") or not self.is_reading:
+        """停止数据流"""
+        if not self.is_reading:
             return
 
         self.is_reading = False
-
-        if self.ser and self.ser.is_open:
-            self.send_ss4_stop_stream()  # 发送 SS:4 停止命令
+        self.serial_manager.stop_reading()
+        self.serial_manager.send_ss4_stop_stream()
 
         # 更新UI状态
-        if hasattr(self, "data_btn"):
-            self.data_btn.config(text="Start Data Stream")
-            self.data_btn.config(state="normal")
-
-        if hasattr(self, "calibrate_btn"):
-            self.calibrate_btn.config(state="disabled")
-
+        self.data_btn.config(text="Start Data Stream")
+        self.data_btn.config(state="normal")
+        self.calibrate_btn.config(state="disabled")
         if hasattr(self, "capture_btn"):
             self.capture_btn.config(state="disabled")
-
-        self.log_message("Data stream stopped")
 
     def stop_data_stream2(self):
-        """停止数据流 - 修复版本"""
-        if not hasattr(self, "is_reading") or not self.is_reading:
+        """停止校准流"""
+        if not self.is_reading:
             return
 
         self.is_reading = False
-
-        if self.ser and self.ser.is_open:
-            self.send_ss4_stop_stream()  # 发送 SS:4 停止命令
+        self.serial_manager.stop_reading()
+        self.serial_manager.send_ss4_stop_stream()
 
         # 更新UI状态
-        if hasattr(self, "data_btn2"):
-            self.data_btn2.config(text="Stop calibration Stream")
-            self.data_btn2.config(state="normal")
-
-        if hasattr(self, "calibrate_btn"):
-            self.calibrate_btn.config(state="disabled")
-
+        self.data_btn2.config(text="Start CAS Stream")
+        self.data_btn2.config(state="normal")
+        self.calibrate_btn.config(state="disabled")
         if hasattr(self, "capture_btn"):
             self.capture_btn.config(state="disabled")
-
-        self.log_message("Data calibration stopped")
-
-    def read_serial_data(self):
-        """读取串口数据 - 修复版本，添加更好的错误处理"""
-        buffer = ""
-        consecutive_errors = 0
-        max_consecutive_errors = 5
-
-        while self.is_reading and self.ser and self.ser.is_open:
-            try:
-                if self.ser.in_waiting > 0:
-                    # 读取可用数据
-                    data = self.ser.read(self.ser.in_waiting).decode(
-                        "ascii", errors="ignore"
-                    )
-                    buffer += data
-
-                    # 处理完整行
-                    lines = buffer.split("\n")
-                    buffer = lines[-1]  # 保留不完整的行
-
-                    for line in lines[:-1]:
-                        line = line.strip()
-                        if line and not line.startswith("SS:"):  # 过滤命令回显
-                            # 非阻塞方式放入队列
-                            try:
-                                if not self.data_queue.full():
-                                    self.data_queue.put_nowait(line)
-                                    self.packets_received += 1
-                                    consecutive_errors = 0  # 重置错误计数
-                                else:
-                                    # 队列满时丢弃最旧的数据
-                                    try:
-                                        self.data_queue.get_nowait()
-                                        self.data_queue.put_nowait(line)
-                                    except queue.Empty:
-                                        pass
-                            except queue.Full:
-                                # 队列满，跳过此数据点
-                                pass
-
-                # 短暂休眠，避免过度占用CPU
-                # 优化：使用自适应睡眠策略，有数据时快速轮询，无数据时降低频率
-                if self.ser.in_waiting > 0:
-                    time.sleep(SerialConfig.READ_SLEEP_DATA)  # 有数据时快速处理
-                else:
-                    time.sleep(SerialConfig.READ_SLEEP_IDLE)   # 无数据时降低轮询频率，减少CPU占用
-
-                # 检查连接状态
-                if not self.ser or not self.ser.is_open:
-                    break
-
-            except serial.SerialException as e:
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    self.log_message(
-                        f"Multiple serial errors, stopping data stream: {str(e)}"
-                    )
-                    break
-                time.sleep(Config.THREAD_ERROR_DELAY)  # 错误时等待更长时间
-            except Exception as e:
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    self.log_message(f"Unexpected error in serial reading: {str(e)}")
-                    break
-                time.sleep(Config.PARSE_RETRY_DELAY)
-
-        # 如果因为错误退出，确保状态正确
-        if self.is_reading:
-            self.log_message("Serial reading thread exited unexpectedly")
-            self.is_reading = False
-            if hasattr(self, "data_btn"):
-                self.root.after(
-                    0, lambda: self.data_btn.config(text="Start Data Stream")
-                )
 
     def parse_sensor_data(self, data_string):
         """解析传感器数据 - 委托给 DataProcessor"""
@@ -1353,287 +1045,49 @@ class StableSensorCalibrator:
         """计算统计信息 - 委托给 DataProcessor"""
         return self.data_processor.calculate_statistics(data_array, start_idx, end_idx)
 
-    def generate_key_from_mac(self, mac_address):
-        """
-        基于MAC地址生成64字符的SHA-256密钥
-        """
-        # 清理MAC地址格式（移除冒号、连字符等分隔符）
-        cleaned_mac = mac_address.replace(":", "").replace("-", "").lower()
+    def generate_key_from_mac(self, mac_address: str) -> str:
+        """基于MAC地址生成密钥 - 委托给 ActivationWorkflow"""
+        return self.activation_workflow.generate_key_from_mac(mac_address)
 
-        # 验证MAC地址长度（应为12个十六进制字符，对应6字节）
-        if len(cleaned_mac) != 12:
-            raise ValueError(
-                f"无效的MAC地址格式: {mac_address}. 清理后应为12个十六进制字符，实际得到{len(cleaned_mac)}个字符: {cleaned_mac}"
-            )
+    def verify_key(self, input_key: str, mac_address: str) -> bool:
+        """验证密钥 - 委托给 ActivationWorkflow"""
+        return self.activation_workflow.verify_key(input_key, mac_address)
 
-        # 将十六进制字符串转换为字节
-        try:
-            mac_bytes = bytes.fromhex(cleaned_mac)
-        except ValueError as e:
-            raise ValueError(f"MAC地址包含无效的十六进制字符: {cleaned_mac}") from e
+    def extract_mac_from_properties(self) -> Optional[str]:
+        """从传感器属性中提取MAC地址 - 委托给 ActivationWorkflow"""
+        mac = self.activation_workflow.extract_mac_from_properties(self.sensor_properties)
+        if mac:
+            self.mac_address = mac
+        return mac
 
-        # 计算SHA-256哈希值
-        hash_object = hashlib.sha256(mac_bytes)
-        hex_digest = hash_object.hexdigest()  # 直接获取64字符的十六进制字符串
+    def validate_mac_address(self, mac_str: str) -> bool:
+        """验证MAC地址格式 - 委托给 ActivationWorkflow"""
+        return ActivationWorkflow.validate_mac_address(mac_str)
 
-        return hex_digest
-
-    def verify_key(self, input_key, mac_address):
-        """
-        验证输入的密钥是否与基于MAC地址生成的密钥匹配
-        """
-        # 生成预期密钥
-        expected_key = self.generate_key_from_mac(mac_address)
-        expected_key2 = expected_key[5:12]
-        # 使用恒定时间比较防止时序攻击
-        if len(input_key) != 7 or len(expected_key) != 64:
-            return False
-
-        return secrets.compare_digest(input_key.lower(), expected_key2.lower())
-
-    def extract_mac_from_properties(self):
-        """从传感器属性中提取MAC地址"""
-        if not self.sensor_properties:
-            return None
-
-        # 在sys字段中查找MAC地址
-        if "sys" in self.sensor_properties:
-            sys_info = self.sensor_properties["sys"]
-
-            # 尝试不同的MAC地址字段名
-            mac_keys = ["MAC", "mac", "mac_address", "macAddress", "device_mac"]
-            for key in mac_keys:
-                if key in sys_info:
-                    mac_value = sys_info[key]
-                    if self.validate_mac_address(mac_value):
-                        return mac_value
-
-            # 在设备名称中查找MAC地址模式
-            if "DN" in sys_info:
-                dn_value = sys_info["DN"]
-                mac_pattern = r"([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})"
-                match = re.search(mac_pattern, dn_value)
-                if match:
-                    return match.group()
-
-        return None
-
-    def validate_mac_address(self, mac_str):
-        """验证MAC地址格式"""
-        if not mac_str or not isinstance(mac_str, str):
-            return False
-
-        # MAC地址格式验证：XX:XX:XX:XX:XX:XX 或 XX-XX-XX-XX-XX-XX
-        mac_pattern = r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-        return re.match(mac_pattern, mac_str) is not None
-
-    def check_activation_status(self):
-        """检查传感器激活状态"""
-        if not self.sensor_properties or not self.mac_address:
-            return False
-
-        # 从属性中获取AKS字段
-        aks_value = None
-        if "sys" in self.sensor_properties:
-            sys_info = self.sensor_properties["sys"]
-            aks_value = (
-                sys_info.get("AKY") or sys_info.get("aky") or sys_info.get("ak_key")
-            )
-
-        if not aks_value:
-            return False
-
-        # 验证密钥
-        try:
-            is_activated = self.verify_key(aks_value, self.mac_address)
-            return is_activated
-        except Exception as e:
-            self.log_message(f"Error verifying activation key: {str(e)}")
-            return False
+    def check_activation_status(self) -> bool:
+        """检查传感器激活状态 - 委托给 ActivationWorkflow"""
+        is_activated = self.activation_workflow.check_activation_status(self.sensor_properties)
+        self.sensor_activated = is_activated
+        return is_activated
 
     def activate_sensor(self):
-        """激活传感器"""
-        if not self.ser or not self.ser.is_open:
-            self.log_message("Error: Not connected to serial port!")
-            return
-
-        if not self.mac_address or not self.generated_key:
-            self.log_message("Error: MAC address or generated key not available!")
-            return
-
-        self.log_message("Starting sensor activation process...")
-
-        # 在新线程中激活传感器
-        threading.Thread(target=self.activate_sensor_thread, daemon=True).start()
+        """激活传感器 - 委托给 ActivationWorkflow"""
+        # 同步参数
+        self.activation_workflow._mac_address = self.mac_address
+        self.activation_workflow._generated_key = self.generated_key
+        self.activation_workflow.activate_sensor()
 
     def activate_sensor_thread(self):
-        """在新线程中激活传感器"""
-        try:
-            # 停止数据流（如果正在运行）
-            original_reading_state = self.is_reading
-            if self.is_reading:
-                self.root.after(
-                    0,
-                    lambda: self.log_message("Stopping data stream for activation..."),
-                )
-                self.root.after(0, self.stop_data_stream)
-                time.sleep(1.0)
-
-            # 清空输入缓冲区
-            self.ser.reset_input_buffer()
-            time.sleep(Config.BUFFER_CLEAR_DELAY)
-
-            # 发送激活命令
-            activation_cmd = f"SET:AKY,{self.generated_key[5:12]}"
-            self.ser.write(activation_cmd.encode())
-            self.ser.flush()
-
-            self.root.after(
-                0,
-                lambda: self.log_message(
-                    f"Sent activation command: SET:AKY,{self.generated_key}"
-                ),
-            )
-
-            # 等待响应
-            time.sleep(2.0)
-
-            # 读取响应
-            response_bytes = b""
-            start_time = time.time()
-            timeout = 5.0
-
-            self.root.after(0, lambda: self.log_message("Reading response..."))
-
-            while time.time() - start_time < timeout:
-                if self.ser.in_waiting > 0:
-                    chunk = self.ser.read(self.ser.in_waiting)
-                    response_bytes += chunk
-
-                    response_str = response_bytes.decode("utf-8", errors="ignore")
-
-                    if (
-                        "success" in response_str.lower()
-                        or "activated" in response_str.lower()
-                    ):
-                        self.root.after(
-                            0, lambda: self.log_message("Sensor activation successful!")
-                        )
-                        self.sensor_activated = True
-                        self.root.after(0, self.update_activation_status)
-                        break
-
-                time.sleep(Config.THREAD_ERROR_DELAY)
-
-            if not self.sensor_activated:
-                self.root.after(
-                    0, lambda: self.log_message("Activation response timeout or failed")
-                )
-
-            # 恢复数据流状态
-            if original_reading_state and not self.is_reading:
-                self.root.after(
-                    0, lambda: self.log_message("Restarting data stream...")
-                )
-                time.sleep(1.0)
-                self.root.after(0, self.start_data_stream)
-
-        except Exception as e:
-            self.root.after(
-                0, lambda: self.log_message(f"Error during activation: {str(e)}")
-            )
+        """在新线程中激活传感器 - 已委托给 ActivationWorkflow"""
+        pass
 
     def verify_activation(self):
-        """验证传感器激活状态"""
-        self.log_message("Verifying sensor activation status...")
-
-        # 重新读取传感器属性来获取最新的AKS值
-        threading.Thread(target=self.verify_activation_thread, daemon=True).start()
+        """验证传感器激活状态 - 委托给 ActivationWorkflow"""
+        self.activation_workflow.verify_activation(self.sensor_properties)
 
     def verify_activation_thread(self):
-        """在新线程中验证激活状态"""
-        try:
-            # 停止数据流
-            original_reading_state = self.is_reading
-            if self.is_reading:
-                self.root.after(
-                    0,
-                    lambda: self.log_message(
-                        "Stopping data stream for verification..."
-                    ),
-                )
-                self.root.after(0, self.stop_data_stream)
-                time.sleep(1.0)
-
-            # 清空输入缓冲区
-            self.ser.reset_input_buffer()
-            time.sleep(Config.BUFFER_CLEAR_DELAY)
-
-            # 发送SS:8命令获取最新属性
-            self.send_ss8_get_properties()
-
-            time.sleep(2.0)
-
-            # 读取响应
-            response_bytes = b""
-            start_time = time.time()
-            timeout = CalibrationConfig.TIMEOUT_PER_POSITION
-
-            while time.time() - start_time < timeout:
-                if self.ser.in_waiting > 0:
-                    response_bytes += self.ser.read(self.ser.in_waiting)
-
-                response_str = response_bytes.decode("utf-8", errors="ignore")
-                json_start = response_str.find("{")
-                json_end = response_str.rfind("}")
-
-                if json_start != -1 and json_end != -1 and json_end > json_start:
-                    json_str = response_str[json_start : json_end + 1]
-
-                    try:
-                        latest_properties = json.loads(json_str)
-                        self.sensor_properties = latest_properties
-
-                        # 检查激活状态
-                        is_activated = self.check_activation_status()
-                        self.sensor_activated = is_activated
-
-                        self.root.after(0, self.update_activation_status)
-
-                        if is_activated:
-                            self.root.after(
-                                0,
-                                lambda: self.log_message(
-                                    "✓ Sensor is properly activated!"
-                                ),
-                            )
-                        else:
-                            self.root.after(
-                                0,
-                                lambda: self.log_message(
-                                    "✗ Sensor is not activated or activation key mismatch"
-                                ),
-                            )
-
-                        break
-
-                    except json.JSONDecodeError:
-                        continue
-
-                time.sleep(Config.THREAD_ERROR_DELAY)
-
-            # 恢复数据流状态
-            if original_reading_state and not self.is_reading:
-                self.root.after(
-                    0, lambda: self.log_message("Restarting data stream...")
-                )
-                time.sleep(1.0)
-                self.root.after(0, self.start_data_stream)
-
-        except Exception as e:
-            self.root.after(
-                0, lambda: self.log_message(f"Error during verification: {str(e)}")
-            )
+        """在新线程中验证激活状态 - 已委托给 ActivationWorkflow"""
+        pass
 
     def update_activation_status(self):
         """更新激活状态显示 - 同时更新 Activation 区域和 Status 区域"""
@@ -2044,279 +1498,44 @@ class StableSensorCalibrator:
                 self.ax4.set_ylim(y_min, y_max)
 
     def start_calibration(self):
-        """开始校准"""
+        """开始校准 - 委托给 CalibrationWorkflow"""
         if not self.is_reading:
             self.log_message("Error: Start data stream first!")
             return
-
+        
         self.is_calibrating = True
-        self.current_position = 0
-        self.calibration_positions = []
+        self.calibration_workflow.start_calibration()
         self.calibrate_btn.config(state="disabled")
         self.capture_btn.config(state="normal")
         self.data_btn.config(state="disabled")
 
-        self.update_position_display()
-        self.log_message("Starting 6-position calibration")
-        self.log_message(f"Position 1: {self.position_names[0]}")
-        self.log_message("Place sensor in position and click 'Capture Position'")
-
     def capture_position(self):
-        """采集当前位置数据"""
-        if not self.is_calibrating or self.current_position >= 6:
-            return
-
-        position = self.current_position
-
-        # 禁用按钮防止重复点击
+        """采集当前位置数据 - 委托给 CalibrationWorkflow"""
         self.capture_btn.config(state="disabled")
-        self.log_message(f"Capturing data for position {position + 1}...")
-
-        # 在新线程中采集数据
-        threading.Thread(
-            target=self.collect_calibration_data, args=(position,), daemon=True
-        ).start()
-
-    def collect_calibration_data(self, position):
-        """采集校准数据"""
-        try:
-            mpu_accel_samples = []
-            mpu_gyro_samples = []
-            adxl_accel_samples = []
-
-            start_time = time.time()
-            samples_collected = 0
-
-            # 采集数据
-            while samples_collected < self.calibration_samples and self.is_reading:
-                try:
-                    # 从队列获取数据
-                    data_string = self.data_queue.get(timeout=Config.QUICK_SLEEP)
-                    mpu_accel, mpu_gyro, adxl_accel = self.parse_sensor_data(
-                        data_string
-                    )
-
-                    if mpu_accel and mpu_gyro and adxl_accel:
-                        mpu_accel_samples.append(mpu_accel)
-                        mpu_gyro_samples.append(mpu_gyro)
-                        adxl_accel_samples.append(adxl_accel)
-                        samples_collected += 1
-
-                    # 超时保护
-                    if time.time() - start_time > 10:
-                        self.root.after(
-                            0,
-                            lambda: self.log_message(
-                                "Timeout: Stopping data collection"
-                            ),
-                        )
-                        break
-
-                except queue.Empty:
-                    time.sleep(Config.QUICK_SLEEP)  # 短暂休眠
-                    continue
-
-            if samples_collected >= Config.CALIBRATION_SAMPLES // 10:  # 至少有10%的样本
-                # 计算平均值
-                mpu_accel_avg = np.mean(mpu_accel_samples, axis=0)
-                mpu_gyro_avg = np.mean(mpu_gyro_samples, axis=0)
-                adxl_accel_avg = np.mean(adxl_accel_samples, axis=0)
-
-                # 计算标准差用于评估数据质量
-                mpu_accel_std = np.std(mpu_accel_samples, axis=0)
-                adxl_accel_std = np.std(adxl_accel_samples, axis=0)
-
-                # 在主线程中更新
-                self.root.after(
-                    0,
-                    lambda: self.process_calibration_data(
-                        position,
-                        samples_collected,
-                        mpu_accel_avg,
-                        mpu_gyro_avg,
-                        adxl_accel_avg,
-                        mpu_accel_std,
-                        adxl_accel_std,
-                    ),
-                )
-            else:
-                self.root.after(
-                    0,
-                    lambda: self.log_message(
-                        f"Error: Insufficient data collected for position {position + 1}"
-                    ),
-                )
-                self.root.after(0, lambda: self.capture_btn.config(state="normal"))
-
-        except Exception as e:
-            self.root.after(
-                0, lambda: self.log_message(f"Error in data collection: {str(e)}")
-            )
-            self.root.after(0, lambda: self.capture_btn.config(state="normal"))
-
-    def process_calibration_data(
-        self,
-        position,
-        samples_collected,
-        mpu_accel_avg,
-        mpu_gyro_avg,
-        adxl_accel_avg,
-        mpu_accel_std,
-        adxl_accel_std,
-    ):
-        """处理校准数据"""
-        # 存储校准数据
-        self.calibration_positions.append(
-            {
-                "mpu_accel": mpu_accel_avg,
-                "mpu_gyro": mpu_gyro_avg,
-                "adxl_accel": adxl_accel_avg,
-            }
-        )
-
-        # 记录数据质量信息
-        self.log_message(
-            f"Position {position + 1} captured: {samples_collected} samples"
-        )
-        self.log_message(
-            f"  MPU6050: [{mpu_accel_avg[0]:.3f}, {mpu_accel_avg[1]:.3f}, {mpu_accel_avg[2]:.3f}]"
-        )
-        self.log_message(
-            f"  ADXL355: [{adxl_accel_avg[0]:.3f}, {adxl_accel_avg[1]:.3f}, {adxl_accel_avg[2]:.3f}]"
-        )
-        self.log_message(
-            f"  Data Quality - MPU6050 Noise: [{mpu_accel_std[0]:.4f}, {mpu_accel_std[1]:.4f}, {mpu_accel_std[2]:.4f}]"
-        )
-
-        self.current_position = position + 1
-
-        if self.current_position < 6:
-            self.update_position_display()
-            self.log_message(
-                f"Position {self.current_position + 1}: {self.position_names[self.current_position]}"
-            )
-            self.capture_btn.config(state="normal")
-        else:
-            self.finish_calibration()
+        self.calibration_workflow.capture_position()
 
     def update_position_display(self):
         """更新位置显示"""
-        if self.current_position < 6:
-            self.position_label.config(
-                text=f"Position {self.current_position + 1}/6: {self.position_names[self.current_position]}"
-            )
-        else:
-            self.position_label.config(text="Calibration complete!")
+        if hasattr(self, 'calibration_workflow'):
+            self.position_label.config(text=self.calibration_workflow.position_progress)
 
     def finish_calibration(self):
-        """完成校准并计算参数"""
-        self.log_message("Calculating calibration parameters...")
-
-        if len(self.calibration_positions) != 6:
-            self.log_message("Error: Need exactly 6 positions for calibration!")
-            self.reset_calibration_state()
-            return
-
-        try:
-            g = Config.GRAVITY_CONSTANT
-
-            # 计算MPU6050加速度计参数
-            mpu_scales = []
-            mpu_offsets = []
-
-            for axis in range(3):
-                pos_idx = axis * 2
-                neg_idx = axis * 2 + 1
-
-                pos_val = self.calibration_positions[pos_idx]["mpu_accel"][axis]
-                neg_val = self.calibration_positions[neg_idx]["mpu_accel"][axis]
-
-                offset = (pos_val + neg_val) / 2.0
-                delta = pos_val - neg_val
-
-                if abs(delta) > 1e-6:
-                    scale = delta / (2.0 * g)
-                else:
-                    scale = 1.0
-
-                # 存储为1/scale用于校正
-                scale_factor = 1.0 / scale if abs(scale) > 1e-6 else 1.0
-
-                mpu_offsets.append(offset)
-                mpu_scales.append(scale_factor)
-
-            # 计算ADXL355加速度计参数
-            adxl_scales = []
-            adxl_offsets = []
-
-            for axis in range(3):
-                pos_idx = axis * 2
-                neg_idx = axis * 2 + 1
-
-                pos_val = self.calibration_positions[pos_idx]["adxl_accel"][axis]
-                neg_val = self.calibration_positions[neg_idx]["adxl_accel"][axis]
-
-                offset = (pos_val + neg_val) / 2.0
-                delta = pos_val - neg_val
-
-                if abs(delta) > 1e-6:
-                    scale = delta / (2.0 * g)
-                else:
-                    scale = 1.0
-
-                scale_factor = 1.0 / scale if abs(scale) > 1e-6 else 1.0
-
-                adxl_offsets.append(offset)
-                adxl_scales.append(scale_factor)
-
-            # 计算陀螺仪偏移
-            gyro_samples = []
-            for pos in self.calibration_positions:
-                gyro_samples.append(pos["mpu_gyro"])
-
-            gyro_avg = np.mean(gyro_samples, axis=0)
-
-            # 更新参数
-            self.calibration_params = {
-                "mpu_accel_scale": mpu_scales,
-                "mpu_accel_offset": mpu_offsets,
-                "adxl_accel_scale": adxl_scales,
-                "adxl_accel_offset": adxl_offsets,
-                "mpu_gyro_offset": gyro_avg.tolist(),
-            }
-
-            # 生成校准命令
-            self.generate_calibration_commands()
-
-            self.is_calibrating = False
-            self.calibrate_btn.config(state="normal")
-            self.capture_btn.config(state="disabled")
-            self.data_btn.config(state="normal")
-            self.send_btn.config(state="normal")
-
-            self.log_message("Calibration completed successfully!")
-
-        except Exception as e:
-            self.log_message(f"Error calculating calibration: {str(e)}")
-            self.reset_calibration_state()
+        """完成校准 - 委托给 CalibrationWorkflow"""
+        self.calibration_workflow.finish_calibration()
 
     def generate_calibration_commands(self):
-        """生成校准命令"""
-        params = self.calibration_params
-
-        commands = [
-            f"SET:RACKS,{params['mpu_accel_scale'][0]:.6f},{params['mpu_accel_scale'][1]:.6f},{params['mpu_accel_scale'][2]:.6f}",
-            f"SET:RACOF,{params['mpu_accel_offset'][0]:.6f},{params['mpu_accel_offset'][1]:.6f},{params['mpu_accel_offset'][2]:.6f}",
-            f"SET:REACKS,{params['adxl_accel_scale'][0]:.6f},{params['adxl_accel_scale'][1]:.6f},{params['adxl_accel_scale'][2]:.6f}",
-            f"SET:REACOF,{params['adxl_accel_offset'][0]:.6f},{params['adxl_accel_offset'][1]:.6f},{params['adxl_accel_offset'][2]:.6f}",
-            f"SET:VROOF,{params['mpu_gyro_offset'][0]:.6f},{params['mpu_gyro_offset'][1]:.6f},{params['mpu_gyro_offset'][2]:.6f}",
-        ]
-
+        """生成校准命令 - 使用 CalibrationWorkflow"""
+        # 从 workflow 获取参数
+        if self.calibration_workflow.calibration_params:
+            self.calibration_params = self.calibration_workflow.calibration_params
+        
+        commands = self.calibration_workflow.generate_calibration_commands()
+        
         # 显示命令
         self.cmd_text.delete(1.0, tk.END)
         for cmd in commands:
             self.cmd_text.insert(tk.END, cmd + "\n")
-
+        
         self.log_message(
             "Calibration commands generated. Click 'Send All Commands' to send to ESP32."
         )

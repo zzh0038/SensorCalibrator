@@ -1,237 +1,325 @@
-# SensorCalibrator 依赖关系分析
+# 方法依赖关系分析
 
-**分析日期**: 2026-02-28
-**目的**: 为主文件拆分重构确定边界
-
----
-
-## 当前架构概览
-
-```
-StableSensorCalibrator (God Class - 3,687 lines)
-├── 状态管理 (70+ 实例变量)
-├── GUI 初始化 (~550 lines)
-│   ├── setup_gui()
-│   ├── setup_left_panel()
-│   ├── setup_compact_stats()
-│   └── 各种 setup_* 方法
-├── 串口通信 (~300 lines)
-│   ├── toggle_connection()
-│   ├── read_serial_data()
-│   ├── send_*_commands()
-│   └── 回调处理
-├── 数据可视化 (~400 lines)
-│   ├── setup_plots()
-│   ├── update_charts()
-│   ├── update_chart_statistics()
-│   ├── adjust_y_limits()
-│   └── blit 优化相关
-├── 校准流程 (~300 lines)
-│   ├── start_calibration()
-│   ├── capture_position()
-│   ├── finish_calibration()
-│   └── update_position_display()
-├── 激活流程 (~300 lines)
-│   ├── activate_sensor()
-│   ├── verify_activation()
-│   ├── generate_key_from_mac()
-│   └── 各种 extract_* 方法
-├── 网络配置 (~200 lines)
-│   ├── set_wifi_config()
-│   ├── set_mqtt_config()
-│   ├── set_OTA_config()
-│   └── read_*_config()
-├── 数据处理 (~200 lines)
-│   ├── parse_sensor_data()
-│   ├── update_statistics()
-│   ├── calculate_statistics()
-│   └── clear_data()
-└── 文件 I/O (~150 lines)
-    ├── save_calibration()
-    ├── load_calibration()
-    └── save/load properties
-```
+**Generated**: 2026-03-02  
+**分析文件**: `StableSensorCalibrator.py` (2,809 行)
 
 ---
 
-## 共享状态分析
+## 1. 职责边界识别
 
-### 核心数据状态 (必须在模块间共享)
+根据方法功能，识别出 6 个主要职责边界：
 
-```python
-# 数据存储 (需要 DataProcessor 管理)
-time_data: deque          # X轴时间数据
-mpu_accel_data: [deque x3]   # MPU6050 加速度
-mpu_gyro_data: [deque x3]   # MPU6050 陀螺仪
-adxl_accel_data: [deque x3]  # ADXL355 加速度
-gravity_mag_data: deque      # 重力矢量模长
+### 1.1 串口通信模块 (Serial Communication)
+**方法列表** (12个):
+- `toggle_connection()`
+- `connect_serial()`
+- `disconnect_serial()`
+- `refresh_ports()`
+- `toggle_data_stream()` / `toggle_data_stream2()`
+- `start_data_stream()` / `start_data_stream2()`
+- `stop_data_stream()` / `stop_data_stream2()`
+- `read_serial_data()`
+- `send_ss_command()` / `send_ss0_start_stream()` / `send_ss1_start_calibration()` / `send_ss4_stop_stream()` / `send_ss8_get_properties()`
 
-# 统计状态 (Statistics Manager)
-real_time_stats: dict     # 实时统计信息
-stats_labels: dict        # UI 标签引用
+**依赖状态**:
+- `self.ser` - 串口对象
+- `self.is_connected` - 连接状态
+- `self.is_reading` - 读取状态
+- `self.data_queue` - 数据队列
 
-# 校准状态 (Calibration Workflow)
-is_calibrating: bool
-current_position: int
-calibration_positions: list
+**依赖其他模块**:
+- 调用 UI 更新方法显示日志
+- 调用数据处理方法解析数据
 
-# 激活状态 (Activation Workflow)
-sensor_properties: dict
-mac_address: str
-sensor_activated: bool
+---
 
-# 串口状态 (Serial Manager)
-ser: Serial
-is_reading: bool
-data_queue: Queue
+### 1.2 网络配置模块 (Network Configuration)
+**方法列表** (12个):
+- `set_wifi_config()`
+- `set_mqtt_config()`
+- `set_ota_config()`
+- `read_wifi_config()` / `read_mqtt_config()` / `read_ota_config()`
+- `send_config_command()`
+- `extract_network_config()`
+- `enable_config_buttons()`
+- `display_network_summary()`
+- `save_network_config()`
+- `load_network_config()`
+- `set_coordinate_mode()` / `set_local_coordinate_mode()` / `set_global_coordinate_mode()`
+
+**依赖状态**:
+- `self.wifi_params` - WiFi配置
+- `self.mqtt_params` - MQTT配置
+- `self.ota_params` - OTA配置
+
+**依赖其他模块**:
+- 依赖 SerialManager 发送命令
+- 调用 UI 方法更新显示
+
+---
+
+### 1.3 校准流程模块 (Calibration Workflow)
+**方法列表** (8个):
+- `start_calibration()`
+- `capture_position()`
+- `collect_calibration_data()`
+- `process_calibration_data()`
+- `update_position_display()`
+- `finish_calibration()`
+- `generate_calibration_commands()`
+- `send_all_commands()` / `send_commands_thread()` / `resend_all_commands()`
+- `reset_calibration_state()`
+
+**依赖状态**:
+- `self.is_calibrating` - 校准状态
+- `self.current_position` - 当前位置
+- `self.calibration_positions` - 位置数据
+- `self.calibration_params` - 校准参数
+
+**依赖其他模块**:
+- 依赖 SerialManager 发送 SS1 命令
+- 依赖 DataProcessor 获取数据
+- 调用 calibration.py 算法
+- 调用 UI 更新显示
+
+---
+
+### 1.4 激活流程模块 (Activation Workflow)
+**方法列表** (10个):
+- `generate_key_from_mac()`
+- `verify_key()`
+- `extract_mac_from_properties()`
+- `validate_mac_address()`
+- `check_activation_status()`
+- `activate_sensor()` / `activate_sensor_thread()`
+- `verify_activation()` / `verify_activation_thread()`
+- `update_activation_status()`
+- `extract_and_process_mac()`
+- `display_activation_info()`
+
+**依赖状态**:
+- `self.mac_address` - MAC地址
+- `self.generated_key` - 生成的密钥
+- `self.sensor_activated` - 激活状态
+
+**依赖其他模块**:
+- 调用 activation.py 算法
+- 调用 UI 更新显示
+- 可能需要 SerialManager 读取属性
+
+---
+
+### 1.5 属性管理模块 (Properties Management)
+**方法列表** (6个):
+- `ask_read_properties()`
+- `read_sensor_properties()` / `read_properties_thread()`
+- `auto_save_properties()`
+- `display_sensor_properties()`
+- `populate_properties_tree()`
+- `display_properties_summary()`
+- `save_properties_to_file()`
+
+**依赖状态**:
+- `self.sensor_properties` - 传感器属性
+
+**依赖其他模块**:
+- 依赖 SerialManager 发送 SS8 命令
+- 调用 UI 更新属性树
+- 调用 ActivationWorkflow 处理 MAC
+
+---
+
+### 1.6 图表管理模块 (Chart Management) - 已提取 ✅
+**所在位置**: `sensor_calibrator/chart_manager.py`
+
+**方法**:
+- `setup_plots()`
+- `update_charts()`
+- `_update_chart_statistics_to_manager()`
+- `adjust_y_limits()`
+- `_init_blit()` / `_update_with_blit()` (如存在)
+
+---
+
+### 1.7 UI 管理模块 (UI Management) - 已提取 ✅
+**所在位置**: `sensor_calibrator/ui_manager.py`
+
+**方法**:
+- `setup_gui()`
+- `setup_left_panel()`
+- `setup_stats_grid()`
+- `log_message()` / `_add_log_entry()`
+
+---
+
+## 2. 方法调用依赖图
+
+```
+StableSensorCalibrator (协调器)
+├── SerialManager
+│   ├── 发送 SS0/SS1/SS4/SS8 命令
+│   ├── 读写串口数据
+│   └── 管理连接状态
+├── NetworkManager
+│   ├── 构建配置命令
+│   ├── 发送给 SerialManager
+│   └── 保存/加载配置文件
+├── CalibrationWorkflow
+│   ├── 使用 SerialManager 发送命令
+│   ├── 使用 DataProcessor 获取数据
+│   ├── 调用 calibration.py 算法
+│   └── 更新 UI 显示进度
+├── ActivationWorkflow
+│   ├── 调用 activation.py 算法
+│   ├── 可能需要读取属性
+│   └── 更新 UI 显示状态
+├── PropertiesManager
+│   ├── 使用 SerialManager 读取属性
+│   ├── 调用 ActivationWorkflow 处理 MAC
+│   └── 更新 UI 属性树
+├── ChartManager (已提取)
+│   └── 独立更新图表
+├── UIManager (已提取)
+│   └── 管理所有控件
+└── DataProcessor (已提取)
+    └── 处理数据解析和统计
 ```
 
 ---
 
-## 重构边界建议
+## 3. 共享状态分析
 
-### 模块 1: ChartManager
-**职责**: 所有 matplotlib 图表相关
-**输入**: 数据字典
-**输出**: 无 (直接操作 canvas)
+### 3.1 需要共享的状态
 
-```python
-class ChartManager:
-    def __init__(self, parent_widget):
-        self.fig = None
-        self.axes = {}
-        self.canvas = None
-    
-    def setup_plots(self):
-        """初始化4个子图"""
-        pass
-    
-    def update_charts(self, data_dict):
-        """更新图表数据"""
-        pass
-```
+| 状态 | 类型 | 共享模块 | 建议方案 |
+|------|------|----------|----------|
+| `self.ser` | 串口对象 | SerialManager, NetworkManager, PropertiesManager | 通过 SerialManager 提供接口 |
+| `self.is_connected` | bool | 多个模块 | 通过回调或属性访问 |
+| `self.sensor_properties` | dict | ActivationWorkflow, PropertiesManager | 通过回调传递 |
+| `self.calibration_params` | dict | CalibrationWorkflow | 作为返回值 |
+| `self.mac_address` | str | ActivationWorkflow, PropertiesManager | 通过回调传递 |
 
-### 模块 2: UIManager
-**职责**: 所有 tkinter GUI 组件
-**输入**: callbacks 字典
-**输出**: 无 (通过回调与 Main 通信)
+### 3.2 回调函数设计
 
 ```python
-class UIManager:
-    def __init__(self, root, callbacks):
-        self.root = root
-        self.callbacks = callbacks
-        self.widgets = {}
+# 主文件定义的回调字典
+callbacks = {
+    # UI 更新回调
+    'log_message': self.ui_manager.log_message,
+    'update_status': self.ui_manager.update_status,
+    'update_progress': self.ui_manager.update_progress,
     
-    def setup_ui(self):
-        """设置完整UI"""
-        pass
+    # 数据访问回调
+    'get_sensor_data': self.data_processor.get_latest_data,
+    'get_statistics': self.data_processor.get_statistics,
     
-    def get_widget(self, name):
-        """获取控件引用"""
-        return self.widgets.get(name)
+    # 状态查询回调
+    'is_connected': lambda: self.serial_manager.is_connected,
+    'is_reading': lambda: self.serial_manager.is_reading,
+}
 ```
 
-### 模块 3: DataProcessor
-**职责**: 数据解析、存储、统计计算
-**输入**: 原始数据字符串
-**输出**: 处理后的数据结构
+---
 
+## 4. 重构顺序建议
+
+基于依赖关系，建议按以下顺序重构：
+
+1. **Sprint 1: SerialManager** (基础依赖)
+   - 最少外部依赖
+   - 其他模块都依赖它
+
+2. **Sprint 2: NetworkManager** (依赖 SerialManager)
+   - 依赖串口发送命令
+   - 相对独立的功能
+
+3. **Sprint 3: CalibrationWorkflow + ActivationWorkflow** (依赖以上模块)
+   - 依赖 SerialManager 发送命令
+   - 依赖 DataProcessor 获取数据
+
+4. **Sprint 4: PropertiesManager** (可选)
+   - 可以合并到主文件或独立模块
+   - 依赖 SerialManager 和 ActivationWorkflow
+
+5. **Sprint 5: 清理验证** (验证 ChartManager + UIManager)
+   - 已提取的模块验证
+   - 主文件清理
+
+---
+
+## 5. 风险点
+
+### 5.1 tkinter 线程安全
+- 所有 UI 更新必须在主线程
+- 解决方案: 使用 `self.root.after()` 调度 UI 更新
+
+### 5.2 循环依赖
+- 避免模块间直接引用
+- 解决方案: 使用回调函数传递依赖
+
+### 5.3 状态同步
+- 多个模块可能同时访问状态
+- 解决方案: 通过主文件协调，或使用属性访问器
+
+---
+
+## 6. 模块接口设计
+
+### 6.1 SerialManager 接口
 ```python
-class DataProcessor:
-    def __init__(self):
-        self.buffers = {
-            'time': deque(maxlen=Config.MAX_DATA_POINTS),
-            'mpu_accel': [deque(maxlen=Config.MAX_DATA_POINTS) for _ in range(3)],
-            # ...
-        }
-    
-    def process_packet(self, data_string):
-        """解析并存储一个数据包"""
-        pass
-    
-    def get_display_data(self, max_points=None):
-        """获取用于显示的数据"""
-        pass
+class SerialManager:
+    def __init__(self, callbacks): ...
+    def connect(self, port, baudrate) -> bool: ...
+    def disconnect(self) -> None: ...
+    def send_command(self, command: str) -> tuple[bool, str]: ...
+    def send_ss_command(self, cmd_id: int, ...) -> bool: ...
+    def start_reading(self) -> None: ...
+    def stop_reading(self) -> None: ...
+    @property
+    def is_connected(self) -> bool: ...
+    @property
+    def is_reading(self) -> bool: ...
 ```
 
-### 模块 4: CalibrationWorkflow
-**职责**: 6位置校准流程管理
-**输入**: 传感器数据, 用户操作
-**输出**: 校准参数
+### 6.2 NetworkManager 接口
+```python
+class NetworkManager:
+    def __init__(self, serial_manager, callbacks): ...
+    def set_wifi_config(self, ssid: str, password: str) -> tuple[bool, str]: ...
+    def set_mqtt_config(self, ...) -> tuple[bool, str]: ...
+    def read_wifi_config(self) -> tuple[bool, dict]: ...
+    def save_config_to_file(self, filepath: str) -> bool: ...
+    def load_config_from_file(self, filepath: str) -> bool: ...
+```
 
+### 6.3 CalibrationWorkflow 接口
 ```python
 class CalibrationWorkflow:
-    def __init__(self, callbacks):
-        self.callbacks = callbacks
-        self.current_position = 0
-        self.calibration_positions = []
-    
-    def start(self):
-        """开始校准流程"""
-        pass
-    
-    def capture_current_position(self, sensor_data):
-        """捕获当前位置数据"""
-        pass
+    def __init__(self, serial_manager, data_processor, callbacks): ...
+    def start_calibration(self) -> bool: ...
+    def capture_position(self) -> bool: ...
+    def finish_calibration(self) -> dict: ...  # 返回校准参数
+    def reset(self) -> None: ...
+    @property
+    def is_calibrating(self) -> bool: ...
+    @property
+    def current_position(self) -> int: ...
 ```
 
-### 模块 5: ActivationWorkflow
-**职责**: 传感器激活流程
-**输入**: MAC地址, 用户密钥
-**输出**: 激活状态
-
+### 6.4 ActivationWorkflow 接口
 ```python
 class ActivationWorkflow:
-    def __init__(self, callbacks):
-        self.callbacks = callbacks
-        self.mac_address = None
-        self.is_activated = False
-    
-    def extract_mac_from_properties(self, properties):
-        """从设备属性提取MAC"""
-        pass
-    
-    def verify_activation(self, user_key, mac_address):
-        """验证用户输入的密钥"""
-        pass
+    def __init__(self, callbacks): ...
+    def generate_key_from_mac(self, mac: str) -> str: ...
+    def verify_key(self, input_key: str, mac: str) -> bool: ...
+    def activate_sensor(self, mac: str, user_key: str) -> tuple[bool, str]: ...
+    def check_activation_status(self) -> bool: ...
+    @property
+    def mac_address(self) -> str | None: ...
+    @property
+    def is_activated(self) -> bool: ...
 ```
 
 ---
 
-## 重构顺序建议
-
-### Phase 1: 低风险模块 (依赖少)
-1. **ChartManager** - 相对独立，只依赖数据输入
-2. **UIManager** - 通过回调解耦
-
-### Phase 2: 数据流模块
-3. **DataProcessor** - 核心数据管理，其他模块依赖它
-
-### Phase 3: 业务流程模块
-4. **CalibrationWorkflow** - 依赖 DataProcessor
-5. **ActivationWorkflow** - 相对独立
-
-### Phase 4: 清理
-6. **Main** - 简化为协调器
-
----
-
-## 风险评估
-
-| 模块 | 风险等级 | 原因 | 缓解策略 |
-|------|---------|------|---------|
-| ChartManager | 低 | 可视化独立 | 保持相同 API |
-| UIManager | 中 | tkinter 状态复杂 | 保留 widget 引用 |
-| DataProcessor | 高 | 核心数据流 | 充分测试 |
-| CalibrationWorkflow | 中 | 状态机复杂 | 保留现有逻辑 |
-| ActivationWorkflow | 低 | 算法已提取 | 使用现有模块 |
-
----
-
-## 回滚检查点
-
-1. **v1.0-before-refactor** (已创建) - 原始状态
-2. **v1.1-after-chart** (计划) - ChartManager 完成后
-3. **v1.2-after-ui** (计划) - UIManager 完成后
-4. **v1.3-after-data** (计划) - DataProcessor 完成后
+**分析完成，可以开始 Sprint 1: 提取 SerialManager**

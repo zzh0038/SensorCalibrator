@@ -22,6 +22,10 @@ from .data_buffer import SensorDataBuffer
 from .chart_manager import ChartManager
 from .ui_manager import UIManager
 from .data_processor import DataProcessor
+from .serial_manager import SerialManager
+from .network_manager import NetworkManager
+from .calibration_workflow import CalibrationWorkflow
+from .activation_workflow import ActivationWorkflow
 
 __all__ = [
     'Config',
@@ -32,6 +36,10 @@ __all__ = [
     'ChartManager',
     'UIManager',
     'DataProcessor',
+    'SerialManager',
+    'NetworkManager',
+    'CalibrationWorkflow',
+    'ActivationWorkflow',
     'MAX_DATA_POINTS',
     'DISPLAY_DATA_POINTS',
     'STATS_WINDOW_SIZE',
