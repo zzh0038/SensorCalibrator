@@ -508,10 +508,13 @@ class StableSensorCalibrator:
 
     def schedule_update_gui(self):
         """调度GUI更新 - 安全版本"""
-        if not self.exiting:
-            self.after_tasks.append(
-                self.root.after(self.update_interval, self.update_gui)
-            )
+        if not self.exiting and hasattr(self, 'root') and self.root:
+            try:
+                if self.root.winfo_exists():
+                    task_id = self.root.after(self.update_interval, self.update_gui)
+                    self.after_tasks.append(task_id)
+            except Exception:
+                pass  # 窗口已关闭，忽略
 
     def on_closing(self):
         """窗口关闭事件处理"""
@@ -878,13 +881,21 @@ class StableSensorCalibrator:
         timestamp = time.strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] {message}"
 
-        # 在主线程中更新UI
-        self.root.after(0, lambda: self._add_log_entry(log_entry))
+        # 在主线程中更新UI（检查窗口是否还存在）
+        if hasattr(self, 'root') and self.root and self.root.winfo_exists():
+            try:
+                self.root.after(0, lambda: self._add_log_entry(log_entry))
+            except Exception:
+                pass  # 窗口已关闭，忽略
 
     def _add_log_entry(self, log_entry):
         """在主线程中添加日志条目"""
-        self.log_text.insert(tk.END, log_entry + "\n")
-        self.log_text.see(tk.END)
+        try:
+            if hasattr(self, 'log_text') and self.log_text.winfo_exists():
+                self.log_text.insert(tk.END, log_entry + "\n")
+                self.log_text.see(tk.END)
+        except Exception:
+            pass  # 控件已销毁，忽略
 
     def toggle_connection(self):
         """切换串口连接"""
@@ -1211,10 +1222,17 @@ class StableSensorCalibrator:
         if self.exiting or not hasattr(self, "root") or not self.root:
             return
         
+        # 检查窗口是否仍然存在
+        try:
+            if not self.root.winfo_exists():
+                return
+        except Exception:
+            return
+        
         # 性能优化：窗口移动期间跳过更新
         if Config.ENABLE_WINDOW_MOVE_PAUSE and self._window_moving:
             # 调度下一次更新
-            if not self.exiting and hasattr(self, "root"):
+            if not self.exiting and hasattr(self, "root") and self.root.winfo_exists():
                 self.schedule_update_gui()
             return
         
