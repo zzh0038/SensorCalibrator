@@ -352,6 +352,7 @@ class StableSensorCalibrator:
         # 激活相关
         self.activate_btn = self.ui_manager.get_widget('activate_btn')
         self.verify_btn = self.ui_manager.get_widget('verify_btn')
+        self.activation_status_var = self.ui_manager.get_var('activation_status')  # 新增：初始化激活状态变量
         
         # WiFi相关
         self.ssid_var = self.ui_manager.get_var('ssid')
