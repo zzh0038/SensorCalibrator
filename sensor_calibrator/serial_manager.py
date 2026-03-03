@@ -362,9 +362,17 @@ class SerialManager:
         """发送 SS:4 指令 - 停止数据流/校准"""
         return self.send_ss_command(4, description)
     
+    def send_ss7_save_config(self, description: str = "Save Configuration to Sensor") -> bool:
+        """发送 SS:7 指令 - 保存配置到传感器"""
+        return self.send_ss_command(7, description)
+    
     def send_ss8_get_properties(self, description: str = "Get Sensor Properties") -> bool:
         """发送 SS:8 指令 - 获取传感器属性"""
         return self.send_ss_command(8, description)
+    
+    def send_ss9_restart_sensor(self, description: str = "Restart Sensor") -> bool:
+        """发送 SS:9 指令 - 重启传感器"""
+        return self.send_ss_command(9, description)
     
     # ==================== 原始命令发送 ====================
     

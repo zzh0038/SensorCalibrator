@@ -112,7 +112,9 @@ class Config:
     CMD_COORD_LOCAL: Final[int] = 2  # SS:2 - Local coordinates
     CMD_COORD_GLOBAL: Final[int] = 3  # SS:3 - Global coordinates
     CMD_STOP_STREAM: Final[int] = 4  # SS:4 - Stop stream
+    CMD_SAVE_CONFIG: Final[int] = 7  # SS:7 - Save configuration to sensor
     CMD_GET_PROPERTIES: Final[int] = 8  # SS:8 - Get sensor properties
+    CMD_RESTART_SENSOR: Final[int] = 9  # SS:9 - Restart sensor
 
     # =========================================================================
     # Network Configuration Defaults
@@ -123,6 +125,16 @@ class Config:
     WIFI_MAX_PASSWORD_LENGTH: Final[int] = 64  # Maximum WiFi password length
     NETWORK_COMMAND_TIMEOUT: Final[float] = 5.0  # Network command timeout (seconds)
     NETWORK_RETRY_COUNT: Final[int] = 3  # Number of retries for network operations
+
+    # =========================================================================
+    # Alarm Threshold Configuration
+    # =========================================================================
+    ALARM_THRESHOLD_ACCEL_MIN: Final[float] = 0.1  # Minimum accel threshold (m/s²)
+    ALARM_THRESHOLD_ACCEL_MAX: Final[float] = 10.0  # Maximum accel threshold (m/s²)
+    ALARM_THRESHOLD_ACCEL_DEFAULT: Final[float] = 0.2  # Default accel threshold (m/s²)
+    ALARM_THRESHOLD_GYRO_MIN: Final[float] = 0.1  # Minimum gyro threshold (°)
+    ALARM_THRESHOLD_GYRO_MAX: Final[float] = 45.0  # Maximum gyro threshold (°)
+    ALARM_THRESHOLD_GYRO_DEFAULT: Final[float] = 0.2  # Default gyro threshold (°)
 
 
 class SerialConfig:

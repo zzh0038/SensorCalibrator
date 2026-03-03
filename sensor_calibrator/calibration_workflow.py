@@ -352,6 +352,69 @@ class CalibrationWorkflow:
         
         return commands
     
+    # ==================== 文件保存功能 ====================
+    
+    def save_calibration_to_file(self, parent_widget=None) -> bool:
+        """
+        保存校准参数到用户选择的文件
+        
+        弹出文件选择对话框让用户选择保存位置，并将校准参数保存为 JSON 文件。
+        
+        Args:
+            parent_widget: 父窗口（用于对话框定位）
+            
+        Returns:
+            bool: 是否成功保存
+        """
+        from tkinter import filedialog
+        from datetime import datetime
+        import json
+        
+        if not self._calibration_params:
+            self._log_message("Error: No calibration parameters to save!")
+            return False
+        
+        # 构建默认文件名
+        default_name = f"calibration_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        # 弹出保存对话框
+        filename = filedialog.asksaveasfilename(
+            parent=parent_widget,
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=default_name,
+            title="Save Calibration Parameters"
+        )
+        
+        if not filename:
+            self._log_message("Save cancelled by user")
+            return False
+        
+        # 构建保存数据
+        save_data = {
+            "timestamp": datetime.now().isoformat(),
+            "calibration_params": self._calibration_params,
+            "calibration_info": {
+                "mpu_accel_scale": self._calibration_params["mpu_accel_scale"],
+                "mpu_accel_offset": self._calibration_params["mpu_accel_offset"],
+                "adxl_accel_scale": self._calibration_params["adxl_accel_scale"],
+                "adxl_accel_offset": self._calibration_params["adxl_accel_offset"],
+                "mpu_gyro_offset": self._calibration_params["mpu_gyro_offset"],
+            }
+        }
+        
+        # 保存到文件
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, indent=2, ensure_ascii=False)
+            
+            self._log_message(f"Calibration parameters saved to: {filename}")
+            return True
+            
+        except Exception as e:
+            self._log_message(f"Error saving calibration parameters: {str(e)}")
+            return False
+    
     # ==================== 辅助方法 ====================
     
     def _log_message(self, message: str) -> None:

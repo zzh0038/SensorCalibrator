@@ -235,6 +235,91 @@ class NetworkManager:
         if 'read_sensor_properties' in self.callbacks:
             self.callbacks['read_sensor_properties']()
     
+    # ==================== 报警阈值配置 ====================
+    
+    def set_alarm_threshold(self, accel_threshold: float, gyro_threshold: float) -> bool:
+        """
+        设置报警阈值
+        
+        发送 SET:AGT 命令设置传感器的加速度报警阈值和倾角报警阈值。
+        
+        Args:
+            accel_threshold: 加速度报警阈值 (m/s²)，范围 0.1-10.0
+            gyro_threshold: 倾角报警阈值 (°)，范围 0.1-45.0
+            
+        Returns:
+            bool: 是否成功启动配置流程
+            
+        Raises:
+            ValueError: 如果阈值超出有效范围
+        """
+        # 验证连接
+        if not self.serial_manager.is_connected:
+            self._log_message("Error: Not connected to serial port!")
+            return False
+        
+        # 验证阈值范围
+        if not (0.1 <= accel_threshold <= 10.0):
+            self._log_message(f"Error: Accel threshold {accel_threshold} out of range (0.1-10.0 m/s²)")
+            return False
+        
+        if not (0.1 <= gyro_threshold <= 45.0):
+            self._log_message(f"Error: Gyro threshold {gyro_threshold} out of range (0.1-45.0°)")
+            return False
+        
+        # 构建报警阈值设置命令
+        # 格式: SET:AGT,<accel_threshold>,<gyro_threshold>
+        agt_cmd = f"SET:AGT,{accel_threshold},{gyro_threshold}"
+        self._log_message(f"Setting alarm threshold: Accel={accel_threshold} m/s², Gyro={gyro_threshold}°")
+        
+        # 在新线程中发送命令
+        threading.Thread(
+            target=self._send_config_command_thread,
+            args=(agt_cmd, "Alarm Threshold"),
+            daemon=True
+        ).start()
+        
+        return True
+    
+    def extract_alarm_threshold(self, sensor_properties: dict) -> dict:
+        """
+        从传感器属性中提取报警阈值
+        
+        Args:
+            sensor_properties: 传感器属性字典
+            
+        Returns:
+            dict: 包含 accel_threshold 和 gyro_threshold 的字典，
+                  如果未找到则返回空字典
+        """
+        if not sensor_properties:
+            return {}
+        
+        threshold_info = {}
+        
+        # 在 sys 字段中查找报警阈值
+        # 注意：实际的字段名需要根据传感器实际返回的属性确定
+        if "sys" in sensor_properties:
+            sys_info = sensor_properties["sys"]
+            
+            # 加速度报警阈值 (AT)
+            accel_threshold = sys_info.get("AT")
+            if accel_threshold is not None:
+                try:
+                    threshold_info["accel_threshold"] = float(accel_threshold)
+                except (ValueError, TypeError):
+                    pass
+            
+            # 倾角报警阈值 (GT)
+            gyro_threshold = sys_info.get("GT")
+            if gyro_threshold is not None:
+                try:
+                    threshold_info["gyro_threshold"] = float(gyro_threshold)
+                except (ValueError, TypeError):
+                    pass
+        
+        return threshold_info
+    
     # ==================== 配置命令发送 ====================
     
     def _send_config_command_thread(self, command: str, config_type: str) -> None:
