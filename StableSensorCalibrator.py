@@ -1121,6 +1121,9 @@ class StableSensorCalibrator:
 
     def check_activation_status(self) -> bool:
         """检查传感器激活状态 - 委托给 ActivationWorkflow"""
+        # 同步 MAC 地址到 ActivationWorkflow
+        if self.mac_address:
+            self.activation_workflow._mac_address = self.mac_address
         is_activated = self.activation_workflow.check_activation_status(self.sensor_properties)
         self.sensor_activated = is_activated
         return is_activated
