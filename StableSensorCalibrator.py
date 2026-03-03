@@ -375,6 +375,11 @@ class StableSensorCalibrator:
         self.set_ota_btn = self.ui_manager.get_widget('set_ota_btn')
         self.read_ota_btn = self.ui_manager.get_widget('read_ota_btn')
         
+        # Alarm & Device 相关
+        self.set_alarm_threshold_btn = self.ui_manager.get_widget('set_alarm_threshold_btn')
+        self.save_config_btn = self.ui_manager.get_widget('save_config_btn')
+        self.restart_sensor_btn = self.ui_manager.get_widget('restart_sensor_btn')
+        
         # 统计标签
         self.stats_labels = {
             'mpu_accel_x_mean': self.ui_manager.get_var('mpu_accel_x_mean'),
