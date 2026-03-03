@@ -173,19 +173,28 @@ class ActivationWorkflow:
         Returns:
             bool: 是否匹配
         """
+        self._log_message(f"[DEBUG] verify_key called with input: {input_key}, len={len(input_key) if input_key else 0}")
+        
         mac = mac_address or self._mac_address
         if not mac:
+            self._log_message("[DEBUG] No MAC address available")
             return False
         
         # 生成预期密钥
         expected_key = self.generate_key_from_mac(mac)
         expected_fragment = expected_key[5:12]
         
+        self._log_message(f"[DEBUG] Expected fragment: {expected_fragment}")
+        self._log_message(f"[DEBUG] Input key: {input_key}")
+        
         # 使用恒定时间比较防止时序攻击
         if len(input_key) != 7 or len(expected_key) != 64:
+            self._log_message(f"[DEBUG] Length check failed: input_len={len(input_key)}, expected_len={len(expected_key)}")
             return False
         
-        return secrets.compare_digest(input_key.lower(), expected_fragment.lower())
+        result = secrets.compare_digest(input_key.lower(), expected_fragment.lower())
+        self._log_message(f"[DEBUG] Compare result: {result}")
+        return result
     
     def check_activation_status(self, sensor_properties: Dict[str, Any]) -> bool:
         """
@@ -197,7 +206,11 @@ class ActivationWorkflow:
         Returns:
             bool: 是否已激活
         """
+        self._log_message(f"[DEBUG] check_activation_status called")
+        self._log_message(f"[DEBUG] MAC in workflow: {self._mac_address}")
+        
         if not sensor_properties or not self._mac_address:
+            self._log_message(f"[DEBUG] Missing data: properties={bool(sensor_properties)}, mac={bool(self._mac_address)}")
             return False
         
         # 从属性中获取AKY字段
@@ -208,13 +221,17 @@ class ActivationWorkflow:
                 sys_info.get("AKY") or sys_info.get("aky") or sys_info.get("ak_key")
             )
         
+        self._log_message(f"[DEBUG] AKY value: {aks_value}")
+        
         if not aks_value:
             self._is_activated = False
+            self._log_message("[DEBUG] No AKY value found")
             return False
         
         # 验证密钥
         try:
             self._is_activated = self.verify_key(aks_value)
+            self._log_message(f"[DEBUG] verify_key result: {self._is_activated}")
             return self._is_activated
         except Exception as e:
             self._log_message(f"Error verifying activation key: {str(e)}")

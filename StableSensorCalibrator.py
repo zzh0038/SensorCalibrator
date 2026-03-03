@@ -1124,8 +1124,27 @@ class StableSensorCalibrator:
         # 同步 MAC 地址到 ActivationWorkflow
         if self.mac_address:
             self.activation_workflow._mac_address = self.mac_address
+            self.log_message(f"[DEBUG] MAC synced: {self.mac_address}")
+        else:
+            self.log_message("[DEBUG] MAC address is None!")
+            
+        # 检查传感器属性
+        if not self.sensor_properties:
+            self.log_message("[DEBUG] sensor_properties is empty!")
+            return False
+            
+        # 检查AKY字段
+        aky = None
+        if "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+            aky = sys_info.get("AKY") or sys_info.get("aky") or sys_info.get("ak_key")
+            self.log_message(f"[DEBUG] AKY from sensor: {aky}")
+        else:
+            self.log_message("[DEBUG] No 'sys' section in sensor_properties")
+        
         is_activated = self.activation_workflow.check_activation_status(self.sensor_properties)
         self.sensor_activated = is_activated
+        self.log_message(f"[DEBUG] Activation check result: {is_activated}")
         return is_activated
 
     def activate_sensor(self):
