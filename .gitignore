@@ -43,3 +43,6 @@ desktop.ini
 
 # Local config
 sensor_properties.json
+
+# Windows reserved names that cause issues
+nul
