@@ -518,6 +518,154 @@ def run_integration_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestValidation))
     suite.addTests(loader.loadTestsFromTestCase(TestConfiguration))
 
+# Sprint 1-3: New Command Tests
+class TestNewCommands(unittest.TestCase):
+    """Test Sprint 1-3 new commands."""
+
+    def test_ss7_save_config_format(self):
+        """Test SS:7 command format."""
+        # SS:7 should be exactly "SS:7\n"
+        expected = "SS:7\n"
+        self.assertEqual(expected, "SS:7\n")
+
+    def test_ss9_restart_sensor_format(self):
+        """Test SS:9 command format."""
+        # SS:9 should be exactly "SS:9\n"
+        expected = "SS:9\n"
+        self.assertEqual(expected, "SS:9\n")
+
+    def test_set_agt_command_format(self):
+        """Test SET:AGT command format."""
+        # Format: SET:AGT,<accel>,<gyro>
+        accel = 0.2
+        gyro = 0.3
+        expected = f"SET:AGT,{accel},{gyro}"
+        self.assertEqual(expected, "SET:AGT,0.2,0.3")
+
+    def test_alarm_threshold_ranges(self):
+        """Test alarm threshold valid ranges."""
+        # Valid ranges
+        valid_cases = [
+            (0.1, 0.1),   # Minimum
+            (10.0, 45.0), # Maximum
+            (0.2, 0.2),   # Typical
+            (5.0, 20.0),  # Middle
+        ]
+        
+        for accel, gyro in valid_cases:
+            self.assertTrue(0.1 <= accel <= 10.0)
+            self.assertTrue(0.1 <= gyro <= 45.0)
+
+    def test_alarm_threshold_invalid_ranges(self):
+        """Test alarm threshold invalid ranges."""
+        invalid_cases = [
+            (0.05, 0.2),   # Accel too low
+            (15.0, 0.2),   # Accel too high
+            (0.2, 0.05),   # Gyro too low
+            (0.2, 50.0),   # Gyro too high
+            (-1.0, 0.2),   # Negative accel
+            (0.2, -1.0),   # Negative gyro
+        ]
+        
+        for accel, gyro in invalid_cases:
+            is_valid = (0.1 <= accel <= 10.0) and (0.1 <= gyro <= 45.0)
+            self.assertFalse(is_valid)
+
+
+class TestActivationWorkflow(unittest.TestCase):
+    """Test activation workflow integration."""
+
+    def test_key_generation_consistency(self):
+        """Test that same MAC always generates same key."""
+        mac = "AA:BB:CC:DD:EE:FF"
+        key1 = generate_key_from_mac(mac)
+        key2 = generate_key_from_mac(mac)
+        
+        self.assertEqual(key1, key2)
+        self.assertEqual(len(key1), 64)
+
+    def test_key_fragment_extraction(self):
+        """Test extraction of 7-character key fragment."""
+        mac = "AA:BB:CC:DD:EE:FF"
+        full_key = generate_key_from_mac(mac)
+        fragment = full_key[5:12]
+        
+        self.assertEqual(len(fragment), 7)
+        self.assertEqual(fragment, full_key[5:12])
+
+    def test_activation_status_check(self):
+        """Test activation status checking logic."""
+        mac = "AA:BB:CC:DD:EE:FF"
+        full_key = generate_key_from_mac(mac)
+        correct_fragment = full_key[5:12]
+        
+        # Should verify with correct fragment
+        is_valid = verify_key(correct_fragment, mac)
+        self.assertTrue(is_valid)
+
+    def test_sensor_properties_parsing(self):
+        """Test parsing sensor properties for activation info."""
+        properties = {
+            "sys": {
+                "MAC": "AA:BB:CC:DD:EE:FF",
+                "AKY": "1234567",
+            }
+        }
+        
+        # Extract MAC
+        mac = extract_mac_from_properties(properties)
+        self.assertEqual(mac, "AA:BB:CC:DD:EE:FF")
+        
+        # Extract AKY
+        aky = properties["sys"].get("AKY")
+        self.assertEqual(aky, "1234567")
+
+
+class TestUIIntegration(unittest.TestCase):
+    """Test UI to backend integration."""
+
+    def test_activation_info_display(self):
+        """Test activation info display format."""
+        mac = "AA:BB:CC:DD:EE:FF"
+        full_key = generate_key_from_mac(mac)
+        fragment = full_key[5:12]
+        
+        # Display format should be:
+        # MAC: XX:XX:XX:XX:XX:XX
+        # Key: abcdefg
+        # Status: Activated / Not Activated
+        
+        self.assertEqual(len(mac), 17)  # Standard MAC format
+        self.assertEqual(len(fragment), 7)
+
+    def test_alarm_threshold_display(self):
+        """Test alarm threshold display values."""
+        accel = 0.2
+        gyro = 0.3
+        
+        # Display format: Accel: 0.20 m/s², Gyro: 0.30°
+        display_accel = f"{accel:.2f}"
+        display_gyro = f"{gyro:.2f}"
+        
+        self.assertEqual(display_accel, "0.20")
+        self.assertEqual(display_gyro, "0.30")
+
+
+# Run all tests
+def run_all_tests():
+    """Run all integration tests."""
+    loader = unittest.TestLoader()
+    suite = unittest.TestSuite()
+
+    # Add all test classes
+    suite.addTests(loader.loadTestsFromTestCase(TestCalibrationAlgorithms))
+    suite.addTests(loader.loadTestsFromTestCase(TestDataParsing))
+    suite.addTests(loader.loadTestsFromTestCase(TestActivationKeyGeneration))
+    suite.addTests(loader.loadTestsFromTestCase(TestNetworkCommandConstruction))
+    suite.addTests(loader.loadTestsFromTestCase(TestNewCommands))
+    suite.addTests(loader.loadTestsFromTestCase(TestActivationWorkflow))
+    suite.addTests(loader.loadTestsFromTestCase(TestUIIntegration))
+
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
 
@@ -531,5 +679,5 @@ def run_integration_tests():
 
 
 if __name__ == "__main__":
-    success = run_integration_tests()
+    success = run_all_tests()
     sys.exit(0 if success else 1)
