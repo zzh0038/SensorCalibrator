@@ -409,6 +409,72 @@ class UIManager:
         )
         verify_btn.pack(side="left", padx=2, expand=True, fill="x")
         self.widgets['verify_btn'] = verify_btn
+        
+        # === 激活信息显示区域 ===
+        info_frame = ttk.Frame(act_content)
+        info_frame.pack(fill="x", pady=(5, 0))
+        
+        # MAC 地址显示
+        mac_frame = ttk.Frame(info_frame)
+        mac_frame.pack(fill="x", pady=1)
+        
+        ttk.Label(mac_frame, text="MAC:", font=("Arial", 8)).pack(side="left", padx=2)
+        
+        mac_var = StringVar(value="--")
+        self.vars['activation_mac'] = mac_var
+        mac_label = ttk.Label(
+            mac_frame, 
+            textvariable=mac_var, 
+            font=("Courier", 8),
+            foreground="gray"
+        )
+        mac_label.pack(side="left", padx=2)
+        
+        # 密钥片段显示（7字符）+ Copy 按钮
+        key_frame = ttk.Frame(info_frame)
+        key_frame.pack(fill="x", pady=1)
+        
+        ttk.Label(key_frame, text="Key:", font=("Arial", 8)).pack(side="left", padx=2)
+        
+        key_var = StringVar()
+        self.vars['activation_key'] = key_var
+        key_entry = ttk.Entry(
+            key_frame,
+            textvariable=key_var,
+            font=("Courier", 8),
+            state="readonly",
+            width=10
+        )
+        key_entry.pack(side="left", padx=2)
+        self.widgets['activation_key_entry'] = key_entry
+        
+        # 复制密钥按钮
+        copy_key_btn = ttk.Button(
+            key_frame,
+            text="Copy",
+            command=self.callbacks.get('copy_activation_key', lambda: None),
+            state="disabled",
+            width=6
+        )
+        copy_key_btn.pack(side="left", padx=2)
+        self.widgets['copy_key_btn'] = copy_key_btn
+        
+        # 激活状态显示
+        status_frame = ttk.Frame(info_frame)
+        status_frame.pack(fill="x", pady=1)
+        
+        ttk.Label(status_frame, text="Status:", font=("Arial", 8)).pack(side="left", padx=2)
+        
+        status_var = StringVar(value="Not Activated")
+        self.vars['activation_status'] = status_var
+        status_label = ttk.Label(
+            status_frame,
+            textvariable=status_var,
+            font=("Arial", 8, "bold"),
+            foreground="red"
+        )
+        status_label.pack(side="left", padx=2)
+        self.widgets['activation_status_label'] = status_label
     
     def _setup_network_section(self):
         """设置网络配置区域框架（具体由子方法填充）"""

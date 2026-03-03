@@ -244,6 +244,8 @@ class StableSensorCalibrator:
             'set_alarm_threshold': self.set_alarm_threshold,
             'restart_sensor': self.restart_sensor,
             'save_config': self.save_config,
+            # Activation 回调
+            'copy_activation_key': self.copy_activation_key,
         }
         self.ui_manager = UIManager(scrollable_frame, self.ui_callbacks)
         
@@ -1147,16 +1149,22 @@ class StableSensorCalibrator:
         if self.sensor_activated:
             # 更新下方 Status 区域
             self.status_var.set("Activated")
-            # 更新 Activation 区域
+            # 更新 Activation 区域（兼容性）
             self.activation_status_var.set("Activated")
             if hasattr(self, "activation_status_label"):
                 self.activation_status_label.config(foreground="green")
             if hasattr(self, "activate_btn"):
                 self.activate_btn.config(state="disabled")
+            # 更新新的 UI 变量
+            if hasattr(self, "ui_manager"):
+                self.ui_manager.update_statistics_label('activation_status', "Activated")
+                status_label = self.ui_manager.get_widget('activation_status_label')
+                if status_label:
+                    status_label.config(foreground="green")
         else:
             # 更新下方 Status 区域
             self.status_var.set("Not activated")
-            # 更新 Activation 区域
+            # 更新 Activation 区域（兼容性）
             self.activation_status_var.set("Not activated")
             if hasattr(self, "activation_status_label"):
                 self.activation_status_label.config(foreground="red")
@@ -1166,6 +1174,12 @@ class StableSensorCalibrator:
                 and self.generated_key
             ):
                 self.activate_btn.config(state="normal")
+            # 更新新的 UI 变量
+            if hasattr(self, "ui_manager"):
+                self.ui_manager.update_statistics_label('activation_status', "Not Activated")
+                status_label = self.ui_manager.get_widget('activation_status_label')
+                if status_label:
+                    status_label.config(foreground="red")
 
     def extract_and_process_mac(self):
         """提取MAC地址并处理激活逻辑"""
@@ -1173,9 +1187,13 @@ class StableSensorCalibrator:
         self.mac_address = self.extract_mac_from_properties()
 
         if self.mac_address:
-            # 确保mac_var存在
+            # 确保mac_var存在（兼容性）
             if hasattr(self, "mac_var"):
                 self.mac_var.set(self.mac_address)
+            
+            # 更新新的UI变量（Activation区域显示）
+            if hasattr(self, "ui_manager"):
+                self.ui_manager.set_entry_value('activation_mac', self.mac_address)
 
             # 生成密钥
             try:
@@ -1184,6 +1202,12 @@ class StableSensorCalibrator:
                     f"Generated activation key from MAC {self.mac_address}"
                 )
                 self.log_message(f"Key: {self.generated_key}")
+                
+                # 更新UI显示密钥片段（7字符）
+                if hasattr(self, "ui_manager") and len(self.generated_key) >= 12:
+                    key_fragment = self.generated_key[5:12]
+                    self.ui_manager.set_entry_value('activation_key', key_fragment)
+                    
             except Exception as e:
                 self.log_message(f"Error generating key from MAC: {str(e)}")
                 return
@@ -1197,6 +1221,10 @@ class StableSensorCalibrator:
                 self.activate_btn.config(state="normal")
                 if hasattr(self, "verify_btn"):
                     self.verify_btn.config(state="normal")
+            
+            # 启用复制密钥按钮
+            if hasattr(self, "ui_manager"):
+                self.ui_manager.set_widget_state('copy_key_btn', 'normal')
 
             self.log_message(
                 f"Sensor activation status: {'ACTIVATED' if self.sensor_activated else 'NOT ACTIVATED'}"
@@ -1205,6 +1233,8 @@ class StableSensorCalibrator:
             self.log_message("Warning: MAC address not found in sensor properties")
             if hasattr(self, "mac_var"):
                 self.mac_var.set("Not found")
+            if hasattr(self, "ui_manager"):
+                self.ui_manager.set_entry_value('activation_mac', "Not found")
 
     def display_activation_info(self):
         """显示激活相关信息"""
@@ -2130,6 +2160,25 @@ class StableSensorCalibrator:
                 self.log_message("Error: SerialManager not available")
         except Exception as e:
             self.log_message(f"Error saving config: {str(e)}")
+    
+    def copy_activation_key(self):
+        """
+        复制激活密钥片段到剪贴板
+        
+        复制7字符密钥片段（generated_key[5:12]）到系统剪贴板。
+        """
+        try:
+            if self.generated_key and len(self.generated_key) >= 12:
+                # 提取7字符片段（与 SET:AKY 命令使用的片段一致）
+                key_fragment = self.generated_key[5:12]
+                # 复制到剪贴板
+                self.root.clipboard_clear()
+                self.root.clipboard_append(key_fragment)
+                self.log_message(f"Activation key fragment copied to clipboard: {key_fragment}")
+            else:
+                self.log_message("Error: No activation key available to copy")
+        except Exception as e:
+            self.log_message(f"Error copying activation key: {str(e)}")
 
     def run(self):
         """运行应用程序"""
