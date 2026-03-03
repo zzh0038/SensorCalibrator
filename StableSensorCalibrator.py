@@ -335,9 +335,9 @@ class StableSensorCalibrator:
         self.capture_btn = self.ui_manager.get_widget('capture_btn')
         self.position_label = self.ui_manager.get_widget('position_label')
         
-        # 状态相关
-        self.status_var = self.ui_manager.get_var('status')
-        self.status_label = self.ui_manager.get_widget('status_label')
+        # 注意: Status section 已删除，状态信息显示在 Activation section 中
+        # 保留 activation_status_var 用于显示激活状态
+        self.activation_status_var = self.ui_manager.get_var('activation_status')
         
         # 命令相关
         self.send_btn = self.ui_manager.get_widget('send_btn')
@@ -349,10 +349,9 @@ class StableSensorCalibrator:
         self.local_coord_btn = self.ui_manager.get_widget('local_coord_btn')
         self.global_coord_btn = self.ui_manager.get_widget('global_coord_btn')
         
-        # 激活相关
+        # 激活相关（包含状态显示）
         self.activate_btn = self.ui_manager.get_widget('activate_btn')
         self.verify_btn = self.ui_manager.get_widget('verify_btn')
-        self.activation_status_var = self.ui_manager.get_var('activation_status')  # 新增：初始化激活状态变量
         
         # WiFi相关
         self.ssid_var = self.ui_manager.get_var('ssid')
@@ -1168,41 +1167,31 @@ class StableSensorCalibrator:
         pass
 
     def update_activation_status(self):
-        """更新激活状态显示 - 同时更新 Activation 区域和 Status 区域"""
+        """更新激活状态显示 - 在 Activation 区域显示"""
         if self.sensor_activated:
-            # 更新下方 Status 区域
-            self.status_var.set("Activated")
-            # 更新 Activation 区域（兼容性）
+            # 更新 Activation 区域
             self.activation_status_var.set("Activated")
-            if hasattr(self, "activation_status_label"):
-                self.activation_status_label.config(foreground="green")
-            if hasattr(self, "activate_btn"):
-                self.activate_btn.config(state="disabled")
-            # 更新新的 UI 变量
             if hasattr(self, "ui_manager"):
                 self.ui_manager.update_statistics_label('activation_status', "Activated")
                 status_label = self.ui_manager.get_widget('activation_status_label')
                 if status_label:
                     status_label.config(foreground="green")
+            if hasattr(self, "activate_btn"):
+                self.activate_btn.config(state="disabled")
         else:
-            # 更新下方 Status 区域
-            self.status_var.set("Not activated")
-            # 更新 Activation 区域（兼容性）
-            self.activation_status_var.set("Not activated")
-            if hasattr(self, "activation_status_label"):
-                self.activation_status_label.config(foreground="red")
+            # 更新 Activation 区域
+            self.activation_status_var.set("Not Activated")
+            if hasattr(self, "ui_manager"):
+                self.ui_manager.update_statistics_label('activation_status', "Not Activated")
+                status_label = self.ui_manager.get_widget('activation_status_label')
+                if status_label:
+                    status_label.config(foreground="red")
             if (
                 hasattr(self, "activate_btn")
                 and self.mac_address
                 and self.generated_key
             ):
                 self.activate_btn.config(state="normal")
-            # 更新新的 UI 变量
-            if hasattr(self, "ui_manager"):
-                self.ui_manager.update_statistics_label('activation_status', "Not Activated")
-                status_label = self.ui_manager.get_widget('activation_status_label')
-                if status_label:
-                    status_label.config(foreground="red")
 
     def extract_and_process_mac(self):
         """提取MAC地址并处理激活逻辑"""
@@ -2115,7 +2104,7 @@ class StableSensorCalibrator:
         self.calibrate_btn.config(state="normal")
         self.capture_btn.config(state="disabled")
         self.data_btn.config(state="normal")
-        self.status_var.set("Status: Ready")
+        self.log_message("Calibration state reset")
 
     # ==================== Alarm & Device 回调方法 ====================
     

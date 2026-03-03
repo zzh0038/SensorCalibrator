@@ -47,7 +47,7 @@ class UIManager:
         self._setup_coordinate_section()
         self._setup_activation_section()
         self._setup_network_notebook()  # 使用 Notebook 替代独立的 WiFi/MQTT/OTA 区域
-        self._setup_status_section()
+        # 注意: Status section 已删除，状态信息显示在 Activation section 中
     
     def _setup_styles(self):
         """设置 ttk 样式"""
@@ -1031,27 +1031,6 @@ class UIManager:
         )
         read_ota_btn.pack(side="left", padx=2)
         self.widgets['read_ota_btn'] = read_ota_btn
-    
-    def _setup_status_section(self):
-        """设置状态显示区域"""
-        status_frame = ttk.LabelFrame(
-            self.parent, text="Status", style="Compact.TLabelframe"
-        )
-        status_frame.pack(fill="x", pady=(0, 5))
-        
-        status_content = ttk.Frame(status_frame)
-        status_content.pack(fill="x", padx=3, pady=2)
-        
-        status_var = StringVar(value="Ready")
-        self.vars['status'] = status_var
-        status_label = ttk.Label(
-            status_content,
-            textvariable=status_var,
-            font=("Arial", 9),
-            foreground="blue",
-        )
-        status_label.pack(pady=1)
-        self.widgets['status_label'] = status_label
     
     # ============== 公共方法 ==============
     
