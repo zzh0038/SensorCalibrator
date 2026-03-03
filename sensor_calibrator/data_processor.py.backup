@@ -11,7 +11,6 @@ DataProcessor - 管理传感器数据的解析、存储和统计计算
 import time
 from typing import List, Tuple, Optional, Dict, Any
 from collections import deque
-import itertools
 import numpy as np
 
 from . import Config
@@ -129,12 +128,7 @@ class DataProcessor:
     
     def calculate_statistics(self, data_array, start_idx: Optional[int] = None, end_idx: Optional[int] = None) -> Tuple[float, float]:
         """
-        计算统计信息（支持deque和list）- 优化版本
-        
-        优化点：
-        - 避免将deque转换为list
-        - 使用itertools.islice直接获取切片
-        - 使用numpy.fromiter直接从迭代器创建数组
+        计算统计信息（支持deque和list）
         
         Args:
             data_array: 数据数组（list 或 deque）
@@ -144,38 +138,26 @@ class DataProcessor:
         Returns:
             (mean, std) 均值和标准差
         """
-        # 处理空数据
+        # 处理deque类型
+        if isinstance(data_array, deque):
+            data_array = list(data_array)
+        
         if not data_array or len(data_array) == 0:
             return 0.0, 0.0
         
-        # 设置默认索引
         if start_idx is None:
             start_idx = 0
         if end_idx is None:
             end_idx = len(data_array)
         
-        # 获取数据片段 - 根据类型选择最优方式
-        if isinstance(data_array, deque):
-            # 对于deque，使用islice避免完整转换
-            # 计算实际结束位置
-            actual_end = min(end_idx, len(data_array))
-            count = actual_end - start_idx
-            
-            if count <= 0:
-                return 0.0, 0.0
-            
-            # 使用islice获取数据，然后直接从迭代器创建numpy数组
-            segment_iter = itertools.islice(data_array, start_idx, actual_end)
-            segment = np.fromiter(segment_iter, dtype=float, count=count)
+        # 获取数据片段
+        if len(data_array) >= end_idx:
+            segment = data_array[start_idx:end_idx]
         else:
-            # 对于list，使用切片（已经是高效的）
-            if len(data_array) >= end_idx:
-                segment = data_array[start_idx:end_idx]
-            else:
-                segment = data_array[start_idx:]
-            
-            if len(segment) == 0:
-                return 0.0, 0.0
+            segment = data_array[start_idx:]
+        
+        if len(segment) == 0:
+            return 0.0, 0.0
         
         # 使用numpy向量化计算
         mean_val = float(np.mean(segment))

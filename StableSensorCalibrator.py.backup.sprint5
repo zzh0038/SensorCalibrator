@@ -20,7 +20,7 @@ from collections import deque
 from typing import Optional
 
 # Import configuration
-from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor, SerialManager, NetworkManager, CalibrationWorkflow, ActivationWorkflow, RingBuffer, LogThrottler
+from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor, SerialManager, NetworkManager, CalibrationWorkflow, ActivationWorkflow, RingBuffer
 
 matplotlib.use("TkAgg")
 
@@ -50,7 +50,7 @@ class StableSensorCalibrator:
         self.ser = None
         self.is_reading = False
         # 使用 RingBuffer 替代 queue.Queue，性能更优
-        self.data_queue = RingBuffer(capacity=Config.MAX_QUEUE_SIZE)
+        self.data_queue = RingBuffer(maxsize=Config.MAX_QUEUE_SIZE)
         self.update_interval = Config.UPDATE_INTERVAL_MS
 
         # 数据处理器（替代原有的数据存储）
@@ -127,10 +127,6 @@ class StableSensorCalibrator:
         # 新增：性能优化相关变量
         self.last_stats_update = 0
         self.stats_update_interval = Config.STATS_UPDATE_INTERVAL   # 统计信息更新间隔（秒）
-        
-        # 新增：日志限流器（防止高频日志导致UI卡顿）
-        self.log_throttler = LogThrottler(interval_ms=100, max_buffer_size=50)
-        self.log_throttler.set_log_function(self._do_log_message)
         
         # 窗口移动检测相关变量
         self._window_moving = False
@@ -507,8 +503,8 @@ class StableSensorCalibrator:
         callbacks = {
             'log_message': self.log_message,
             'get_data_queue': lambda: self.data_queue,
+            'on_data_received': None,  # 可选：如果需要实时处理
             'update_connection_state': self._on_connection_state_changed,
-            # 'on_data_received': None,  # 可选：如果需要实时处理，不要设为 None
         }
         self.serial_manager = SerialManager(callbacks)
         
@@ -930,31 +926,17 @@ class StableSensorCalibrator:
         if ports:
             self.port_combo.current(0)
 
-    def _do_log_message(self, log_entry):
-        """
-        实际执行日志输出的内部方法
-        由 LogThrottler 调用
-        """
+    def log_message(self, message):
+        """添加日志消息"""
+        timestamp = time.strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] {message}"
+
         # 在主线程中更新UI（检查窗口是否还存在）
         if hasattr(self, 'root') and self.root and self.root.winfo_exists():
             try:
                 self.root.after(0, lambda: self._add_log_entry(log_entry))
             except Exception:
                 pass  # 窗口已关闭，忽略
-
-    def log_message(self, message, level="INFO"):
-        """
-        添加日志消息（使用限流器）
-        
-        Args:
-            message: 日志消息
-            level: 日志级别 (DEBUG, INFO, WARNING, ERROR)
-        """
-        timestamp = time.strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] {message}"
-        
-        # 使用限流器处理日志
-        self.log_throttler.log(log_entry, level)
 
     def _add_log_entry(self, log_entry):
         """在主线程中添加日志条目"""

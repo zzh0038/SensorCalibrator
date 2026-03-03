@@ -12,7 +12,6 @@ import time
 from typing import Callable, Optional
 
 from .config import Config, SerialConfig
-from .ring_buffer import RingBuffer
 
 
 class SerialManager:
@@ -117,13 +116,13 @@ class SerialManager:
             self._log_message(f"Connected to {port} at {baudrate} baud")
             
             # 通知连接状态变化
-            if self.callbacks.get('update_connection_state') is not None:
+            if 'update_connection_state' in self.callbacks:
                 self.callbacks['update_connection_state'](True)
             
             return True
             
         except Exception as e:
-            self._log_message(f"Error connecting to {port}: {str(e)}", "ERROR")
+            self._log_message(f"Error connecting to {port}: {str(e)}")
             self._ser = None
             self._is_connected = False
             return False
@@ -139,14 +138,14 @@ class SerialManager:
             try:
                 self._ser.close()
             except Exception as e:
-                self._log_message(f"Error closing serial port: {str(e)}", "ERROR")
+                self._log_message(f"Error closing serial port: {str(e)}")
         
         self._ser = None
         self._is_connected = False
         self._log_message("Disconnected from serial port")
         
         # 通知连接状态变化
-        if self.callbacks.get('update_connection_state') is not None:
+        if 'update_connection_state' in self.callbacks:
             self.callbacks['update_connection_state'](False)
     
     def toggle_connection(self, port: str, baudrate: int) -> bool:
@@ -197,7 +196,7 @@ class SerialManager:
             return True
             
         except Exception as e:
-            self._log_message(f"Error starting data reading: {str(e)}", "ERROR")
+            self._log_message(f"Error starting data reading: {str(e)}")
             self._is_reading = False
             return False
     
@@ -233,18 +232,11 @@ class SerialManager:
     
     def _read_serial_data(self) -> None:
         """
-        串口数据读取线程 - 优化版本（使用RingBuffer）
-        
-        优化点：
-        - 使用RingBuffer替代Queue，满时单操作覆盖
-        - 减少锁竞争
-        - 批量处理行数据
+        串口数据读取线程
+        在后台线程中运行，将解析后的数据放入队列
         """
         buffer = ""
         data_queue = self.callbacks.get('get_data_queue', lambda: None)()
-        
-        # 使用RingBuffer更高效，但保持对标准Queue的兼容
-        use_ring_buffer = isinstance(data_queue, RingBuffer)
         
         while self._is_reading and self.is_connected:
             try:
@@ -259,47 +251,26 @@ class SerialManager:
                     lines = buffer.split("\n")
                     buffer = lines[-1]  # 保留不完整的行
                     
-                    # 批量处理有效行
-                    valid_lines = []
                     for line in lines[:-1]:
                         line = line.strip()
                         if line and not line.startswith("SS:"):  # 过滤命令回显
-                            valid_lines.append(line)
-                            
-                            # 调用数据接收回调（每行都调用）
-                            if self.callbacks.get('on_data_received') is not None:
-                                self.callbacks['on_data_received'](line)
-                    
-                    # 批量放入队列
-                    if data_queue and valid_lines:
-                        if use_ring_buffer:
-                            # RingBuffer：批量放入更高效
-                            data_queue.put_batch(valid_lines)
-                            self._packets_received += len(valid_lines)
-                            self._consecutive_errors = 0
-                        else:
-                            # 标准Queue：逐行放入，保持兼容性
-                            for line in valid_lines:
-                                if not data_queue.full():
-                                    try:
-                                        data_queue.put_nowait(line)
-                                        self._packets_received += 1
-                                        self._consecutive_errors = 0
-                                    except queue.Full:
-                                        # 队列满时丢弃最旧的数据
-                                        try:
-                                            data_queue.get_nowait()
-                                            data_queue.put_nowait(line)
-                                        except queue.Empty:
-                                            pass
-                                else:
-                                    # 满了也要尝试放入（丢弃最旧的）
+                            # 放入队列
+                            if data_queue and not data_queue.full():
+                                try:
+                                    data_queue.put_nowait(line)
+                                    self._packets_received += 1
+                                    self._consecutive_errors = 0
+                                except queue.Full:
+                                    # 队列满时丢弃最旧的数据
                                     try:
                                         data_queue.get_nowait()
                                         data_queue.put_nowait(line)
-                                        self._packets_received += 1
                                     except queue.Empty:
                                         pass
+                            
+                            # 调用数据接收回调
+                            if 'on_data_received' in self.callbacks:
+                                self.callbacks['on_data_received'](line)
                 
                 # 自适应睡眠策略
                 if self._ser.in_waiting > 0:
@@ -314,20 +285,20 @@ class SerialManager:
             except serial.SerialException as e:
                 self._consecutive_errors += 1
                 if self._consecutive_errors >= self._max_consecutive_errors:
-                    self._log_message(f"Multiple serial errors, stopping: {str(e)}", "ERROR")
+                    self._log_message(f"Multiple serial errors, stopping: {str(e)}")
                     break
                 time.sleep(Config.THREAD_ERROR_DELAY)
                 
             except Exception as e:
                 self._consecutive_errors += 1
                 if self._consecutive_errors >= self._max_consecutive_errors:
-                    self._log_message(f"Unexpected error in serial reading: {str(e)}", "ERROR")
+                    self._log_message(f"Unexpected error in serial reading: {str(e)}")
                     break
                 time.sleep(Config.PARSE_RETRY_DELAY)
         
         # 如果因为错误退出，确保状态正确
         if self._is_reading:
-            self._log_message("Serial reading thread exited unexpectedly", "WARNING")
+            self._log_message("Serial reading thread exited unexpectedly")
             self._is_reading = False
     
     # ==================== SS 命令 ====================
@@ -363,12 +334,12 @@ class SerialManager:
             
         except serial.SerialException as e:
             if not silent:
-                self._log_message(f"Serial error sending SS:{cmd_id}: {str(e)}", "ERROR")
+                self._log_message(f"Serial error sending SS:{cmd_id}: {str(e)}")
             return False
             
         except Exception as e:
             if not silent:
-                self._log_message(f"Unexpected error sending SS:{cmd_id}: {str(e)}", "ERROR")
+                self._log_message(f"Unexpected error sending SS:{cmd_id}: {str(e)}")
             return False
     
     def send_ss0_start_stream(self, description: str = "Start Data Stream") -> bool:
@@ -461,26 +432,10 @@ class SerialManager:
     
     # ==================== 辅助方法 ====================
     
-    def _log_message(self, message: str, level: str = "INFO") -> None:
-        """
-        记录日志（通过回调）
-        
-        Args:
-            message: 日志消息
-            level: 日志级别 (DEBUG, INFO, WARNING, ERROR)，默认 INFO
-        """
-        if self.callbacks.get('log_message') is not None:
-            # 检查回调是否支持 level 参数
-            import inspect
-            sig = inspect.signature(self.callbacks['log_message'])
-            param_count = len([p for p in sig.parameters.values() if p.default is inspect.Parameter.empty or p.default != inspect.Parameter.empty])
-            
-            if level != "INFO" and param_count >= 2:
-                # 非 INFO 级别且支持 level 参数
-                self.callbacks['log_message'](message, level)
-            else:
-                # 保持向后兼容：INFO 级别或旧回调只传 message
-                self.callbacks['log_message'](message)
+    def _log_message(self, message: str) -> None:
+        """记录日志（通过回调）"""
+        if 'log_message' in self.callbacks:
+            self.callbacks['log_message'](message)
     
     def reset_packet_count(self) -> None:
         """重置数据包计数"""

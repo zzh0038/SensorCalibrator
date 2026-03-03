@@ -441,58 +441,9 @@ class ChartManager:
         stats_text4 += f"Std: {gravity_std:6.3f}"
         self.ax4_stats_text.set_text(stats_text4)
     
-    def _calculate_y_range(self, data_channels: List[List[float]], 
-                           recent_points: int,
-                           padding: float,
-                           min_range: float,
-                           default_range: Tuple[float, float]) -> Optional[Tuple[float, float]]:
-        """
-        计算多通道数据的Y轴范围 - 优化版本
-        
-        优化点：
-        - 避免创建大型中间列表
-        - 逐通道计算min/max，然后汇总
-        - 减少内存分配
-        
-        Args:
-            data_channels: 数据通道列表（如3个轴的数据）
-            recent_points: 最近数据点数量
-            padding: Y轴边距
-            min_range: 最小范围
-            default_range: 默认范围（当数据范围太小时使用）
-            
-        Returns:
-            (y_min, y_max) 或 None 如果无法计算
-        """
-        y_min = float('inf')
-        y_max = float('-inf')
-        has_data = False
-        
-        for channel in data_channels:
-            if len(channel) >= recent_points:
-                # 直接计算切片的最小值/最大值，无需复制
-                channel_min = np.min(channel[-recent_points:])
-                channel_max = np.max(channel[-recent_points:])
-                y_min = min(y_min, channel_min)
-                y_max = max(y_max, channel_max)
-                has_data = True
-        
-        if not has_data:
-            return None
-        
-        # 应用边距
-        y_min -= padding
-        y_max += padding
-        
-        # 检查最小范围
-        if abs(y_max - y_min) < min_range:
-            return default_range
-        
-        return float(y_min), float(y_max)
-    
     def adjust_y_limits(self, data_dict: Dict[str, Any]):
         """
-        调整Y轴范围 - 优化版本（无中间列表分配）
+        调整Y轴范围 - 使用numpy向量化计算
         
         Args:
             data_dict: 包含传感器数据的字典
@@ -501,45 +452,63 @@ class ChartManager:
         mpu_accel = data_dict.get('mpu_accel', [[], [], []])
         if mpu_accel[0] and len(mpu_accel[0]) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(mpu_accel[0]))
-            limits = self._calculate_y_range(
-                mpu_accel, 
-                recent_points,
-                Config.CHART_Y_PADDING,
-                Config.CHART_MIN_Y_RANGE,
-                (-10, 10)
-            )
-            if limits:
-                self.ax1.set_ylim(limits[0], limits[1])
+            
+            recent_data = []
+            for i in range(3):
+                if len(mpu_accel[i]) >= recent_points:
+                    recent_data.extend(mpu_accel[i][-recent_points:])
+            
+            if recent_data:
+                y_min = float(np.min(recent_data)) - Config.CHART_Y_PADDING
+                y_max = float(np.max(recent_data)) + Config.CHART_Y_PADDING
+                
+                if abs(y_max - y_min) < Config.CHART_MIN_Y_RANGE:
+                    y_min = -10
+                    y_max = 10
+                
+                self.ax1.set_ylim(y_min, y_max)
         
         # ADXL355加速度计
         adxl_accel = data_dict.get('adxl_accel', [[], [], []])
         if adxl_accel[0] and len(adxl_accel[0]) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(adxl_accel[0]))
-            limits = self._calculate_y_range(
-                adxl_accel,
-                recent_points,
-                Config.CHART_Y_PADDING,
-                1.0,  # min_range
-                (-10, 10)
-            )
-            if limits:
-                self.ax2.set_ylim(limits[0], limits[1])
+            
+            recent_data = []
+            for i in range(3):
+                if len(adxl_accel[i]) >= recent_points:
+                    recent_data.extend(adxl_accel[i][-recent_points:])
+            
+            if recent_data:
+                y_min = float(np.min(recent_data)) - Config.CHART_Y_PADDING
+                y_max = float(np.max(recent_data)) + Config.CHART_Y_PADDING
+                
+                if abs(y_max - y_min) < 1:
+                    y_min = -10
+                    y_max = 10
+                
+                self.ax2.set_ylim(y_min, y_max)
         
         # MPU6050陀螺仪
         mpu_gyro = data_dict.get('mpu_gyro', [[], [], []])
         if mpu_gyro[0] and len(mpu_gyro[0]) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(mpu_gyro[0]))
-            limits = self._calculate_y_range(
-                mpu_gyro,
-                recent_points,
-                Config.CHART_MIN_Y_RANGE / 2,
-                Config.CHART_MIN_Y_RANGE / 2,
-                (-5, 5)
-            )
-            if limits:
-                self.ax3.set_ylim(limits[0], limits[1])
+            
+            recent_data = []
+            for i in range(3):
+                if len(mpu_gyro[i]) >= recent_points:
+                    recent_data.extend(mpu_gyro[i][-recent_points:])
+            
+            if recent_data:
+                y_min = float(np.min(recent_data)) - Config.CHART_MIN_Y_RANGE / 2
+                y_max = float(np.max(recent_data)) + Config.CHART_MIN_Y_RANGE / 2
+                
+                if abs(y_max - y_min) < Config.CHART_MIN_Y_RANGE / 2:
+                    y_min = -5
+                    y_max = 5
+                
+                self.ax3.set_ylim(y_min, y_max)
         
-        # 重力矢量模长（单通道，单独处理）
+        # 重力矢量模长
         gravity = data_dict.get('gravity', [])
         if gravity and len(gravity) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(gravity))
@@ -550,7 +519,8 @@ class ChartManager:
                 y_max = float(np.max(recent_data)) + Config.CHART_Y_PADDING
                 
                 if abs(y_max - y_min) < 1:
-                    y_min, y_max = 0, 20
+                    y_min = 0
+                    y_max = 20
                 
                 self.ax4.set_ylim(y_min, y_max)
     

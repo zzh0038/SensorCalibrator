@@ -19,6 +19,8 @@ from .config import (
     GRAVITY_CONSTANT,
 )
 from .data_buffer import SensorDataBuffer
+from .ring_buffer import RingBuffer
+from .log_throttler import LogThrottler, CountingLogThrottler
 from .chart_manager import ChartManager
 from .ui_manager import UIManager
 from .data_processor import DataProcessor
@@ -33,6 +35,9 @@ __all__ = [
     'UIConfig',
     'CalibrationConfig',
     'SensorDataBuffer',
+    'RingBuffer',
+    'LogThrottler',
+    'CountingLogThrottler',
     'ChartManager',
     'UIManager',
     'DataProcessor',

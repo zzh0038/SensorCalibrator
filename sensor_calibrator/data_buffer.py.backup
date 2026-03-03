@@ -6,9 +6,7 @@ Thread-safe operations for use with concurrent data acquisition.
 """
 
 import threading
-from typing import List, Optional, Tuple, Dict, Any, Deque
-from collections import deque
-import itertools
+from typing import List, Optional, Tuple, Dict, Any
 import numpy as np
 
 from .config import Config
@@ -32,12 +30,12 @@ class SensorDataBuffer:
         self._max_points = max_points or Config.MAX_DATA_POINTS
         self._lock = threading.Lock()
         
-        # Data storage - 使用 deque 自动管理长度
-        self._time_data: Deque[float] = deque(maxlen=self._max_points)
-        self._mpu_accel_data: List[Deque[float]] = [deque(maxlen=self._max_points) for _ in range(3)]
-        self._mpu_gyro_data: List[Deque[float]] = [deque(maxlen=self._max_points) for _ in range(3)]
-        self._adxl_accel_data: List[Deque[float]] = [deque(maxlen=self._max_points) for _ in range(3)]
-        self._gravity_mag_data: Deque[float] = deque(maxlen=self._max_points)
+        # Data storage
+        self._time_data: List[float] = []
+        self._mpu_accel_data: List[List[float]] = [[], [], []]
+        self._mpu_gyro_data: List[List[float]] = [[], [], []]
+        self._adxl_accel_data: List[List[float]] = [[], [], []]
+        self._gravity_mag_data: List[float] = []
         
         # Statistics cache
         self._stats_cache: Dict[str, Any] = {}
@@ -73,8 +71,25 @@ class SensorDataBuffer:
                 self._adxl_accel_data[i].append(adxl_accel[i])
             self._gravity_mag_data.append(gravity_mag)
             
-            # deque 自动处理长度限制，无需手动调用 _enforce_size_limit
+            # Limit size if needed
+            self._enforce_size_limit()
             self._stats_valid = False
+    
+    def _enforce_size_limit(self) -> None:
+        """Remove oldest data if buffer exceeds max size."""
+        current_len = len(self._time_data)
+        if current_len > self._max_points:
+            # Calculate start index for retention
+            start_idx = current_len - self._max_points
+            
+            # Slice all data arrays (all channels have same length as time_data)
+            self._time_data = self._time_data[start_idx:]
+            self._gravity_mag_data = self._gravity_mag_data[start_idx:]
+            
+            for i in range(3):
+                self._mpu_accel_data[i] = self._mpu_accel_data[i][start_idx:]
+                self._mpu_gyro_data[i] = self._mpu_gyro_data[i][start_idx:]
+                self._adxl_accel_data[i] = self._adxl_accel_data[i][start_idx:]
     
     # -------------------------------------------------------------------------
     # Data Access
@@ -124,14 +139,13 @@ class SensorDataBuffer:
             if len(self._time_data) < n:
                 return None
             
-            # 使用 itertools.islice 高效获取最后 n 个元素
-            # 避免将完整 deque 转换为 list
+            start = -n if n > 0 else 0
             return {
-                'time': list(itertools.islice(self._time_data, max(0, len(self._time_data) - n), None)),
-                'mpu_accel': [list(itertools.islice(ch, max(0, len(ch) - n), None)) for ch in self._mpu_accel_data],
-                'mpu_gyro': [list(itertools.islice(ch, max(0, len(ch) - n), None)) for ch in self._mpu_gyro_data],
-                'adxl_accel': [list(itertools.islice(ch, max(0, len(ch) - n), None)) for ch in self._adxl_accel_data],
-                'gravity': list(itertools.islice(self._gravity_mag_data, max(0, len(self._gravity_mag_data) - n), None)),
+                'time': self._time_data[start:],
+                'mpu_accel': [ch[start:] for ch in self._mpu_accel_data],
+                'mpu_gyro': [ch[start:] for ch in self._mpu_gyro_data],
+                'adxl_accel': [ch[start:] for ch in self._adxl_accel_data],
+                'gravity': self._gravity_mag_data[start:],
             }
     
     # -------------------------------------------------------------------------
@@ -168,25 +182,25 @@ class SensorDataBuffer:
                 'gravity': {'mean': 0.0, 'std': 0.0},
             }
             
-            # Calculate for each channel - 使用 itertools.islice 处理 deque
+            # Calculate for each channel
             for i in range(3):
                 if len(self._mpu_accel_data[i]) >= window:
-                    data = list(itertools.islice(self._mpu_accel_data[i], start_idx, None))
+                    data = self._mpu_accel_data[i][start_idx:]
                     stats['mpu_accel']['mean'][i] = float(np.mean(data))
                     stats['mpu_accel']['std'][i] = float(np.std(data))
                 
                 if len(self._mpu_gyro_data[i]) >= window:
-                    data = list(itertools.islice(self._mpu_gyro_data[i], start_idx, None))
+                    data = self._mpu_gyro_data[i][start_idx:]
                     stats['mpu_gyro']['mean'][i] = float(np.mean(data))
                     stats['mpu_gyro']['std'][i] = float(np.std(data))
                 
                 if len(self._adxl_accel_data[i]) >= window:
-                    data = list(itertools.islice(self._adxl_accel_data[i], start_idx, None))
+                    data = self._adxl_accel_data[i][start_idx:]
                     stats['adxl_accel']['mean'][i] = float(np.mean(data))
                     stats['adxl_accel']['std'][i] = float(np.std(data))
             
             if len(self._gravity_mag_data) >= window:
-                data = list(itertools.islice(self._gravity_mag_data, start_idx, None))
+                data = self._gravity_mag_data[start_idx:]
                 stats['gravity']['mean'] = float(np.mean(data))
                 stats['gravity']['std'] = float(np.std(data))
             
@@ -209,10 +223,9 @@ class SensorDataBuffer:
         """Clear all data from buffer."""
         with self._lock:
             self._time_data.clear()
-            # 重新初始化 deque，保持 maxlen
-            self._mpu_accel_data = [deque(maxlen=self._max_points) for _ in range(3)]
-            self._mpu_gyro_data = [deque(maxlen=self._max_points) for _ in range(3)]
-            self._adxl_accel_data = [deque(maxlen=self._max_points) for _ in range(3)]
+            self._mpu_accel_data = [[], [], []]
+            self._mpu_gyro_data = [[], [], []]
+            self._adxl_accel_data = [[], [], []]
             self._gravity_mag_data.clear()
             self._stats_cache.clear()
             self._stats_valid = False
@@ -237,10 +250,4 @@ class SensorDataBuffer:
         """Set maximum buffer size."""
         with self._lock:
             self._max_points = value
-            # 重新创建 deque 以应用新的 maxlen
-            # 注意：这会保留数据，但超出新限制的旧数据会被丢弃
-            self._time_data = deque(self._time_data, maxlen=value)
-            self._mpu_accel_data = [deque(ch, maxlen=value) for ch in self._mpu_accel_data]
-            self._mpu_gyro_data = [deque(ch, maxlen=value) for ch in self._mpu_gyro_data]
-            self._adxl_accel_data = [deque(ch, maxlen=value) for ch in self._adxl_accel_data]
-            self._gravity_mag_data = deque(self._gravity_mag_data, maxlen=value)
+            self._enforce_size_limit()
