@@ -46,10 +46,7 @@ class UIManager:
         self._setup_commands_section()
         self._setup_coordinate_section()
         self._setup_activation_section()
-        self._setup_network_section()
-        self._setup_wifi_section()
-        self._setup_mqtt_section()
-        self._setup_ota_section()
+        self._setup_network_notebook()  # 使用 Notebook 替代独立的 WiFi/MQTT/OTA 区域
         self._setup_status_section()
     
     def _setup_styles(self):
@@ -415,8 +412,342 @@ class UIManager:
     
     def _setup_network_section(self):
         """设置网络配置区域框架（具体由子方法填充）"""
-        pass  # 由 _setup_wifi_section, _setup_mqtt_section, _setup_ota_section 处理
+        pass  # 由 _setup_network_notebook 处理
     
+    def _setup_network_notebook(self):
+        """
+        设置网络配置 Notebook 标签页
+        
+        包含4个标签页：
+        - WiFi: WiFi配置
+        - MQTT: MQTT配置
+        - OTA: OTA配置
+        - Alarm & Device: 报警阈值和设备控制
+        """
+        # 创建 Notebook 容器框架
+        notebook_frame = ttk.LabelFrame(
+            self.parent, text="Network & Device Configuration", style="Compact.TLabelframe"
+        )
+        notebook_frame.pack(fill="x", pady=(0, 5))
+        
+        # 创建 Notebook
+        notebook = ttk.Notebook(notebook_frame)
+        notebook.pack(fill="x", padx=5, pady=2)
+        
+        # === Tab 1: WiFi ===
+        wifi_tab = ttk.Frame(notebook)
+        notebook.add(wifi_tab, text="WiFi")
+        self._setup_wifi_tab(wifi_tab)
+        
+        # === Tab 2: MQTT ===
+        mqtt_tab = ttk.Frame(notebook)
+        notebook.add(mqtt_tab, text="MQTT")
+        self._setup_mqtt_tab(mqtt_tab)
+        
+        # === Tab 3: OTA ===
+        ota_tab = ttk.Frame(notebook)
+        notebook.add(ota_tab, text="OTA")
+        self._setup_ota_tab(ota_tab)
+        
+        # === Tab 4: Alarm & Device ===
+        alarm_device_tab = ttk.Frame(notebook)
+        notebook.add(alarm_device_tab, text="Alarm & Device")
+        self._setup_alarm_device_tab(alarm_device_tab)
+    
+    def _setup_wifi_tab(self, parent):
+        """设置 WiFi 标签页内容"""
+        # SSID
+        ssid_frame = ttk.Frame(parent)
+        ssid_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(ssid_frame, text="SSID:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        ssid_var = StringVar()
+        self.vars['ssid'] = ssid_var
+        ssid_entry = ttk.Entry(ssid_frame, textvariable=ssid_var, font=("Arial", 9), width=20)
+        ssid_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # 密码
+        password_frame = ttk.Frame(parent)
+        password_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(password_frame, text="Password:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        password_var = StringVar()
+        self.vars['password'] = password_var
+        password_entry = ttk.Entry(
+            password_frame,
+            textvariable=password_var,
+            show="*",
+            font=("Arial", 9),
+            width=20,
+        )
+        password_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # 按钮
+        wifi_btn_frame = ttk.Frame(parent)
+        wifi_btn_frame.pack(fill="x", pady=5)
+        
+        set_wifi_btn = ttk.Button(
+            wifi_btn_frame,
+            text="Set WiFi",
+            command=self.callbacks.get('set_wifi_config', lambda: None),
+            state="disabled",
+            width=12,
+        )
+        set_wifi_btn.pack(side="left", padx=2)
+        self.widgets['set_wifi_btn'] = set_wifi_btn
+        
+        read_wifi_btn = ttk.Button(
+            wifi_btn_frame,
+            text="Read WiFi",
+            command=self.callbacks.get('read_wifi_config', lambda: None),
+            state="disabled",
+            width=12,
+        )
+        read_wifi_btn.pack(side="left", padx=2)
+        self.widgets['read_wifi_btn'] = read_wifi_btn
+    
+    def _setup_mqtt_tab(self, parent):
+        """设置 MQTT 标签页内容"""
+        # Broker
+        broker_frame = ttk.Frame(parent)
+        broker_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(broker_frame, text="Broker:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        broker_var = StringVar()
+        self.vars['mqtt_broker'] = broker_var
+        broker_entry = ttk.Entry(broker_frame, textvariable=broker_var, font=("Arial", 9), width=20)
+        broker_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # Username
+        user_frame = ttk.Frame(parent)
+        user_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(user_frame, text="Username:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        user_var = StringVar()
+        self.vars['mqtt_user'] = user_var
+        user_entry = ttk.Entry(user_frame, textvariable=user_var, font=("Arial", 9), width=20)
+        user_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # Password
+        pwd_frame = ttk.Frame(parent)
+        pwd_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(pwd_frame, text="Password:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        pwd_var = StringVar()
+        self.vars['mqtt_password'] = pwd_var
+        pwd_entry = ttk.Entry(pwd_frame, textvariable=pwd_var, show="*", font=("Arial", 9), width=20)
+        pwd_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # Port
+        port_frame = ttk.Frame(parent)
+        port_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(port_frame, text="Port:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        port_var = StringVar(value="1883")
+        self.vars['mqtt_port'] = port_var
+        port_entry = ttk.Entry(port_frame, textvariable=port_var, font=("Arial", 9), width=10)
+        port_entry.pack(side="left", padx=2)
+        
+        # 按钮
+        mqtt_btn_frame = ttk.Frame(parent)
+        mqtt_btn_frame.pack(fill="x", pady=5)
+        
+        set_mqtt_btn = ttk.Button(
+            mqtt_btn_frame,
+            text="Set MQTT",
+            command=self.callbacks.get('set_mqtt_config', lambda: None),
+            state="disabled",
+            width=12,
+        )
+        set_mqtt_btn.pack(side="left", padx=2)
+        self.widgets['set_mqtt_btn'] = set_mqtt_btn
+        
+        read_mqtt_btn = ttk.Button(
+            mqtt_btn_frame,
+            text="Read MQTT",
+            command=self.callbacks.get('read_mqtt_config', lambda: None),
+            state="disabled",
+            width=12,
+        )
+        read_mqtt_btn.pack(side="left", padx=2)
+        self.widgets['read_mqtt_btn'] = read_mqtt_btn
+    
+    def _setup_ota_tab(self, parent):
+        """设置 OTA 标签页内容"""
+        # URL1
+        url1_frame = ttk.Frame(parent)
+        url1_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(url1_frame, text="URL1:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        url1_var = StringVar()
+        self.vars['url1'] = url1_var
+        url1_entry = ttk.Entry(url1_frame, textvariable=url1_var, font=("Arial", 9), width=20)
+        url1_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # URL2
+        url2_frame = ttk.Frame(parent)
+        url2_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(url2_frame, text="URL2:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        url2_var = StringVar()
+        self.vars['url2'] = url2_var
+        url2_entry = ttk.Entry(url2_frame, textvariable=url2_var, font=("Arial", 9), width=20)
+        url2_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # URL3
+        url3_frame = ttk.Frame(parent)
+        url3_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(url3_frame, text="URL3:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        url3_var = StringVar()
+        self.vars['url3'] = url3_var
+        url3_entry = ttk.Entry(url3_frame, textvariable=url3_var, font=("Arial", 9), width=20)
+        url3_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # URL4
+        url4_frame = ttk.Frame(parent)
+        url4_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(url4_frame, text="URL4:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        url4_var = StringVar()
+        self.vars['url4'] = url4_var
+        url4_entry = ttk.Entry(url4_frame, textvariable=url4_var, font=("Arial", 9), width=20)
+        url4_entry.pack(side="left", padx=2, fill="x", expand=True)
+        
+        # 按钮
+        ota_btn_frame = ttk.Frame(parent)
+        ota_btn_frame.pack(fill="x", pady=5)
+        
+        set_ota_btn = ttk.Button(
+            ota_btn_frame,
+            text="Set OTA",
+            command=self.callbacks.get('set_ota_config', lambda: None),
+            state="disabled",
+            width=12,
+        )
+        set_ota_btn.pack(side="left", padx=2)
+        self.widgets['set_ota_btn'] = set_ota_btn
+        
+        read_ota_btn = ttk.Button(
+            ota_btn_frame,
+            text="Read OTA",
+            command=self.callbacks.get('read_ota_config', lambda: None),
+            state="disabled",
+            width=12,
+        )
+        read_ota_btn.pack(side="left", padx=2)
+        self.widgets['read_ota_btn'] = read_ota_btn
+    
+    def _setup_alarm_device_tab(self, parent):
+        """
+        设置 Alarm & Device 标签页内容
+        
+        包含：
+        - 报警阈值设置
+        - 设备控制按钮（Save Config, Restart Sensor）
+        - 当前阈值显示
+        """
+        # === Alarm Threshold Section ===
+        alarm_frame = ttk.LabelFrame(parent, text="Alarm Threshold", padding=5)
+        alarm_frame.pack(fill="x", pady=(0, 5))
+        
+        # 加速度阈值
+        accel_frame = ttk.Frame(alarm_frame)
+        accel_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(accel_frame, text="Accel (m/s²):", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        accel_var = StringVar(value="0.2")
+        self.vars['alarm_accel_threshold'] = accel_var
+        accel_entry = ttk.Entry(accel_frame, textvariable=accel_var, font=("Arial", 9), width=10)
+        accel_entry.pack(side="left", padx=2)
+        
+        # 倾角阈值
+        gyro_frame = ttk.Frame(alarm_frame)
+        gyro_frame.pack(fill="x", pady=2)
+        
+        ttk.Label(gyro_frame, text="Gyro (°):", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        gyro_var = StringVar(value="0.2")
+        self.vars['alarm_gyro_threshold'] = gyro_var
+        gyro_entry = ttk.Entry(gyro_frame, textvariable=gyro_var, font=("Arial", 9), width=10)
+        gyro_entry.pack(side="left", padx=2)
+        
+        # Set Alarm Threshold 按钮
+        set_alarm_btn = ttk.Button(
+            alarm_frame,
+            text="Set Alarm Threshold",
+            command=self.callbacks.get('set_alarm_threshold', lambda: None),
+            state="disabled",
+            width=20,
+        )
+        set_alarm_btn.pack(fill="x", pady=5)
+        self.widgets['set_alarm_threshold_btn'] = set_alarm_btn
+        
+        # === Device Control Section ===
+        device_frame = ttk.LabelFrame(parent, text="Device Control", padding=5)
+        device_frame.pack(fill="x", pady=(0, 5))
+        
+        device_btn_frame = ttk.Frame(device_frame)
+        device_btn_frame.pack(fill="x", pady=2)
+        
+        # Save Config 按钮 (SS:7)
+        save_config_btn = ttk.Button(
+            device_btn_frame,
+            text="Save Config",
+            command=self.callbacks.get('save_config', lambda: None),
+            state="disabled",
+            width=15,
+        )
+        save_config_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['save_config_btn'] = save_config_btn
+        
+        # Restart Sensor 按钮 (SS:9)
+        restart_btn = ttk.Button(
+            device_btn_frame,
+            text="Restart Sensor",
+            command=self.callbacks.get('restart_sensor', lambda: None),
+            state="disabled",
+            width=15,
+        )
+        restart_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['restart_sensor_btn'] = restart_btn
+        
+        # === Current Status Section ===
+        status_frame = ttk.LabelFrame(parent, text="Current Thresholds", padding=5)
+        status_frame.pack(fill="x", pady=(0, 5))
+        
+        # 当前加速度阈值显示
+        accel_status_var = StringVar(value="Accel: -- m/s²")
+        self.vars['current_accel_threshold'] = accel_status_var
+        accel_status_label = ttk.Label(
+            status_frame,
+            textvariable=accel_status_var,
+            font=("Arial", 9),
+        )
+        accel_status_label.pack(anchor="w", padx=2, pady=1)
+        
+        # 当前倾角阈值显示
+        gyro_status_var = StringVar(value="Gyro: -- °")
+        self.vars['current_gyro_threshold'] = gyro_status_var
+        gyro_status_label = ttk.Label(
+            status_frame,
+            textvariable=gyro_status_var,
+            font=("Arial", 9),
+        )
+        gyro_status_label.pack(anchor="w", padx=2, pady=1)
+    
+    # [保留原有的方法作为备份，但不再被调用]
     def _setup_wifi_section(self):
         """设置 WiFi 配置区域"""
         wifi_frame = ttk.LabelFrame(

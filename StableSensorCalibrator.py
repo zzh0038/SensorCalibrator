@@ -240,6 +240,10 @@ class StableSensorCalibrator:
             'read_mqtt_config': self.read_mqtt_config,
             'set_ota_config': self.set_ota_config,
             'read_ota_config': self.read_ota_config,
+            # Alarm & Device 回调
+            'set_alarm_threshold': self.set_alarm_threshold,
+            'restart_sensor': self.restart_sensor,
+            'save_config': self.save_config,
         }
         self.ui_manager = UIManager(scrollable_frame, self.ui_callbacks)
         
@@ -783,6 +787,36 @@ class StableSensorCalibrator:
             self.URL2_var.set(self.ota_params.get('URL2', ''))
             self.URL3_var.set(self.ota_params.get('URL3', ''))
             self.URL4_var.set(self.ota_params.get('URL4', ''))
+    
+    def extract_and_display_alarm_threshold(self):
+        """
+        从传感器属性中提取报警阈值并显示在 UI 上
+        """
+        try:
+            # 使用 NetworkManager 提取阈值
+            threshold_info = self.network_manager.extract_alarm_threshold(self.sensor_properties)
+            
+            if threshold_info:
+                accel_threshold = threshold_info.get('accel_threshold')
+                gyro_threshold = threshold_info.get('gyro_threshold')
+                
+                # 更新 UI 显示
+                if accel_threshold is not None:
+                    self.ui_manager.set_entry_value('alarm_accel_threshold', str(accel_threshold))
+                    self.ui_manager.update_statistics_label('current_accel_threshold', 
+                                                            f"Accel: {accel_threshold} m/s²")
+                
+                if gyro_threshold is not None:
+                    self.ui_manager.set_entry_value('alarm_gyro_threshold', str(gyro_threshold))
+                    self.ui_manager.update_statistics_label('current_gyro_threshold', 
+                                                            f"Gyro: {gyro_threshold}°")
+                
+                self.log_message(f"Current alarm threshold - Accel: {accel_threshold} m/s², Gyro: {gyro_threshold}°")
+            else:
+                self.log_message("No alarm threshold found in sensor properties")
+                
+        except Exception as e:
+            self.log_message(f"Error extracting alarm threshold: {str(e)}")
 
     def enable_config_buttons(self):
         """启用配置按钮"""
@@ -802,6 +836,13 @@ class StableSensorCalibrator:
             self.local_coord_btn.config(state="normal")
         if hasattr(self, "global_coord_btn"):
             self.global_coord_btn.config(state="normal")
+        # 启用 Alarm & Device 标签页按钮
+        if hasattr(self, "set_alarm_threshold_btn"):
+            self.set_alarm_threshold_btn.config(state="normal")
+        if hasattr(self, "save_config_btn"):
+            self.save_config_btn.config(state="normal")
+        if hasattr(self, "restart_sensor_btn"):
+            self.restart_sensor_btn.config(state="normal")
 
     def display_network_summary(self):
         """显示网络配置摘要 - 委托给 NetworkManager"""
@@ -1775,6 +1816,9 @@ class StableSensorCalibrator:
 
                             # 提取网络配置
                             self.root.after(0, self.extract_network_config)
+                            
+                            # 提取并显示报警阈值
+                            self.root.after(0, self.extract_and_display_alarm_threshold)
 
                             # 显示网络配置摘要
                             self.root.after(0, self.display_network_summary)
@@ -2019,6 +2063,73 @@ class StableSensorCalibrator:
         self.capture_btn.config(state="disabled")
         self.data_btn.config(state="normal")
         self.status_var.set("Status: Ready")
+
+    # ==================== Alarm & Device 回调方法 ====================
+    
+    def set_alarm_threshold(self):
+        """
+        设置报警阈值
+        
+        从 UI 获取加速度阈值和倾角阈值，
+        调用 NetworkManager 发送 SET:AGT 命令。
+        """
+        try:
+            # 从 UI 获取阈值
+            accel_str = self.ui_manager.get_entry_value('alarm_accel_threshold')
+            gyro_str = self.ui_manager.get_entry_value('alarm_gyro_threshold')
+            
+            # 转换为浮点数
+            try:
+                accel_threshold = float(accel_str)
+                gyro_threshold = float(gyro_str)
+            except ValueError:
+                self.log_message("Error: Invalid threshold values")
+                return
+            
+            # 调用 NetworkManager 设置阈值
+            if hasattr(self, 'network_manager'):
+                success = self.network_manager.set_alarm_threshold(
+                    accel_threshold, gyro_threshold
+                )
+                if success:
+                    self.log_message(f"Setting alarm threshold: Accel={accel_threshold} m/s², Gyro={gyro_threshold}°")
+            else:
+                self.log_message("Error: NetworkManager not available")
+                
+        except Exception as e:
+            self.log_message(f"Error setting alarm threshold: {str(e)}")
+    
+    def restart_sensor(self):
+        """
+        重启传感器
+        
+        发送 SS:9 命令重启传感器设备。
+        """
+        try:
+            if hasattr(self, 'serial_manager'):
+                success = self.serial_manager.send_ss9_restart_sensor()
+                if success:
+                    self.log_message("Sent restart command to sensor (SS:9)")
+            else:
+                self.log_message("Error: SerialManager not available")
+        except Exception as e:
+            self.log_message(f"Error restarting sensor: {str(e)}")
+    
+    def save_config(self):
+        """
+        保存配置到传感器
+        
+        发送 SS:7 命令让传感器保存当前配置。
+        """
+        try:
+            if hasattr(self, 'serial_manager'):
+                success = self.serial_manager.send_ss7_save_config()
+                if success:
+                    self.log_message("Sent save config command to sensor (SS:7)")
+            else:
+                self.log_message("Error: SerialManager not available")
+        except Exception as e:
+            self.log_message(f"Error saving config: {str(e)}")
 
     def run(self):
         """运行应用程序"""
