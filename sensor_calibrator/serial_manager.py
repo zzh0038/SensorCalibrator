@@ -12,7 +12,7 @@ import time
 from typing import Callable, Optional
 
 from .config import Config, SerialConfig
-from .ring_buffer import RingBuffer
+from .ring_buffer import RingBuffer, QueueAdapter
 
 
 class SerialManager:
@@ -243,8 +243,8 @@ class SerialManager:
         buffer = ""
         data_queue = self.callbacks.get('get_data_queue', lambda: None)()
         
-        # 使用RingBuffer更高效，但保持对标准Queue的兼容
-        use_ring_buffer = isinstance(data_queue, RingBuffer)
+        # 使用RingBuffer或QueueAdapter更高效（它们支持put_batch）
+        use_ring_buffer = isinstance(data_queue, (RingBuffer, QueueAdapter))
         
         while self._is_reading and self.is_connected:
             try:

@@ -19,7 +19,7 @@ from .config import (
     GRAVITY_CONSTANT,
 )
 from .data_buffer import SensorDataBuffer
-from .ring_buffer import RingBuffer
+from .ring_buffer import RingBuffer, QueueAdapter
 from .log_throttler import LogThrottler, CountingLogThrottler
 from .chart_manager import ChartManager
 from .ui_manager import UIManager

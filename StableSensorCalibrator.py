@@ -17,10 +17,10 @@ import re
 import matplotlib
 import atexit
 from collections import deque
-from typing import Optional
+from typing import Optional, Dict
 
 # Import configuration
-from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor, SerialManager, NetworkManager, CalibrationWorkflow, ActivationWorkflow, RingBuffer, LogThrottler
+from sensor_calibrator import Config, UIConfig, CalibrationConfig, SerialConfig, ChartManager, UIManager, DataProcessor, SerialManager, NetworkManager, CalibrationWorkflow, ActivationWorkflow, RingBuffer, QueueAdapter, LogThrottler
 
 matplotlib.use("TkAgg")
 
@@ -49,8 +49,8 @@ class StableSensorCalibrator:
         # 初始化所有变量...
         self.ser = None
         self.is_reading = False
-        # 使用 RingBuffer 替代 queue.Queue，性能更优
-        self.data_queue = RingBuffer(capacity=Config.MAX_QUEUE_SIZE)
+        # 使用 QueueAdapter 包装 RingBuffer，提供兼容的 Queue 接口
+        self.data_queue = QueueAdapter(capacity=Config.MAX_QUEUE_SIZE)
         self.update_interval = Config.UPDATE_INTERVAL_MS
 
         # 数据处理器（替代原有的数据存储）
@@ -139,7 +139,44 @@ class StableSensorCalibrator:
         self._window_configure_count = 0
         
         # 图表管理器（在setup_gui中初始化）
-        self.chart_manager = None
+        self.chart_manager: Optional[ChartManager] = None
+        self.canvas: Optional[FigureCanvasTkAgg] = None
+        
+        # tkinter 变量和组件（在_setup_ui_references中初始化）
+        self.root: Optional[tk.Tk] = None
+        self.port_var: Optional[StringVar] = None
+        self.baud_var: Optional[StringVar] = None
+        self.freq_var: Optional[StringVar] = None
+        self.mac_var: Optional[StringVar] = None
+        self.position_var: Optional[StringVar] = None
+        self.log_text: Optional[scrolledtext.ScrolledText] = None
+        self.cmd_text: Optional[scrolledtext.ScrolledText] = None
+        
+        # UI 组件引用
+        self.port_combo: Optional[ttk.Combobox] = None
+        self.connect_btn: Optional[ttk.Button] = None
+        self.refresh_btn: Optional[ttk.Button] = None
+        self.data_btn: Optional[ttk.Button] = None
+        self.data_btn2: Optional[ttk.Button] = None
+        self.calibrate_btn: Optional[ttk.Button] = None
+        self.capture_btn: Optional[ttk.Button] = None
+        self.send_btn: Optional[ttk.Button] = None
+        self.save_btn: Optional[ttk.Button] = None
+        self.read_props_btn: Optional[ttk.Button] = None
+        self.resend_btn: Optional[ttk.Button] = None
+        
+        # 统计标签
+        self.stats_labels: Dict[str, Optional[StringVar]] = {}
+        
+        # 线程
+        self.serial_thread: Optional[threading.Thread] = None
+        
+        # 图表轴（保持向后兼容）
+        self.ax1 = None
+        self.ax2 = None
+        self.ax3 = None
+        self.ax4 = None
+        self.fig = None
 
         # 设置GUI
         self.setup_gui()
@@ -267,8 +304,9 @@ class StableSensorCalibrator:
         self.chart_manager = ChartManager(right_panel)
         self.chart_manager.setup_plots()
         self.canvas = self.chart_manager.get_canvas()
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
+        if self.canvas is not None:
+            self.canvas.draw()
+            self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=5, pady=5)
 
         # ========== 底部输出区域 ==========
         bottom_frame = ttk.Frame(main_frame)
@@ -436,16 +474,21 @@ class StableSensorCalibrator:
     def _on_position_captured(self, next_position: int):
         """位置采集完成回调"""
         self.current_position = next_position
-        self.capture_btn.config(state="normal")
+        if self.capture_btn is not None:
+            self.capture_btn.config(state="normal")
         self.update_position_display()
     
     def _on_calibration_finished(self, params: dict):
         """校准完成回调"""
         self.calibration_params = params
-        self.calibrate_btn.config(state="normal")
-        self.capture_btn.config(state="disabled")
-        self.data_btn.config(state="normal")
-        self.position_label.config(text="Calibration complete!")
+        if self.calibrate_btn is not None:
+            self.calibrate_btn.config(state="normal")
+        if self.capture_btn is not None:
+            self.capture_btn.config(state="disabled")
+        if self.data_btn is not None:
+            self.data_btn.config(state="normal")
+        if self.position_label is not None:
+            self.position_label.config(text="Calibration complete!")
         self.log_message("Calibration finished successfully!")
     
     def _on_calibration_error(self):
@@ -454,7 +497,8 @@ class StableSensorCalibrator:
     
     def _on_capture_error(self):
         """采集错误回调"""
-        self.capture_btn.config(state="normal")
+        if self.capture_btn is not None:
+            self.capture_btn.config(state="normal")
     
     def _init_activation_workflow(self):
         """初始化激活工作流"""
@@ -490,16 +534,22 @@ class StableSensorCalibrator:
     
     def _on_wifi_config_loaded(self, params: dict):
         """WiFi配置加载回调"""
-        self.ssid_var.set(params.get('ssid', ''))
-        self.password_var.set(params.get('password', ''))
+        if self.ssid_var is not None:
+            self.ssid_var.set(params.get('ssid', ''))
+        if self.password_var is not None:
+            self.password_var.set(params.get('password', ''))
         self.wifi_params = params
     
     def _on_mqtt_config_loaded(self, params: dict):
         """MQTT配置加载回调"""
-        self.mqtt_broker_var.set(params.get('broker', ''))
-        self.mqtt_user_var.set(params.get('username', ''))
-        self.mqtt_password_var.set(params.get('password', ''))
-        self.mqtt_port_var.set(params.get('port', '1883'))
+        if self.mqtt_broker_var is not None:
+            self.mqtt_broker_var.set(params.get('broker', ''))
+        if self.mqtt_user_var is not None:
+            self.mqtt_user_var.set(params.get('username', ''))
+        if self.mqtt_password_var is not None:
+            self.mqtt_password_var.set(params.get('password', ''))
+        if self.mqtt_port_var is not None:
+            self.mqtt_port_var.set(params.get('port', '1883'))
         self.mqtt_params = params
 
     def _init_serial_manager(self):
@@ -525,7 +575,7 @@ class StableSensorCalibrator:
 
     def schedule_update_gui(self):
         """调度GUI更新 - 安全版本"""
-        if not self.exiting and hasattr(self, 'root') and self.root:
+        if not self.exiting and self.root is not None:
             try:
                 if self.root.winfo_exists():
                     task_id = self.root.after(self.update_interval, self.update_gui)
@@ -542,7 +592,8 @@ class StableSensorCalibrator:
         if response:
             self.exiting = True
             self.cleanup()
-            self.root.destroy()
+            if self.root is not None:
+                self.root.destroy()
 
     def cleanup(self):
         """清理资源，确保安全退出"""
@@ -582,6 +633,9 @@ class StableSensorCalibrator:
 
     def cancel_all_after_tasks(self):
         """取消所有after任务"""
+        if self.root is None:
+            return
+            
         for task_id in self.after_tasks:
             try:
                 self.root.after_cancel(task_id)
@@ -611,17 +665,18 @@ class StableSensorCalibrator:
                 self._window_configure_count += 1
                 
                 # 取消之前的定时器
-                if self._window_move_timer:
+                if self._window_move_timer and self.root is not None:
                     try:
                         self.root.after_cancel(self._window_move_timer)
                     except:
                         pass
                 
                 # 设置新的定时器，延迟后恢复更新
-                self._window_move_timer = self.root.after(
-                    Config.WINDOW_MOVE_PAUSE_DELAY, 
-                    self._on_window_move_end
-                )
+                if self.root is not None:
+                    self._window_move_timer = self.root.after(
+                        Config.WINDOW_MOVE_PAUSE_DELAY, 
+                        self._on_window_move_end
+                    )
         except:
             pass
     
@@ -638,11 +693,11 @@ class StableSensorCalibrator:
             if hasattr(self, "ser") and self.ser and self.ser.is_open:
                 self.send_ss0_start_stream()  # 静默停止
 
-            if hasattr(self, "data_btn"):
+            if self.data_btn is not None:
                 self.data_btn.config(text="Start Data Stream")
-            if hasattr(self, "calibrate_btn"):
+            if self.calibrate_btn is not None:
                 self.calibrate_btn.config(state="disabled")
-            if hasattr(self, "capture_btn"):
+            if self.capture_btn is not None:
                 self.capture_btn.config(state="disabled")
 
             self.log_message("数据流已停止")
@@ -655,12 +710,12 @@ class StableSensorCalibrator:
         self.exiting = True
 
         # 等待串口读取线程结束
-        if hasattr(self, "serial_thread") and self.serial_thread.is_alive():
+        if self.serial_thread is not None and self.serial_thread.is_alive():
             # 设置超时等待线程结束
             start_time = time.time()
             while (
                 time.time() - start_time < 2.0
-                and hasattr(self, "serial_thread")
+                and self.serial_thread is not None
                 and self.serial_thread.is_alive()
             ):
                 time.sleep(Config.THREAD_ERROR_DELAY)
@@ -690,6 +745,10 @@ class StableSensorCalibrator:
 
     def set_wifi_config(self):
         """设置WiFi配置 - 委托给 NetworkManager"""
+        if self.ssid_var is None or self.password_var is None:
+            self.log_message("Error: WiFi variables not initialized!")
+            return
+            
         ssid = self.ssid_var.get().strip()
         password = self.password_var.get().strip()
         
@@ -698,6 +757,10 @@ class StableSensorCalibrator:
 
     def set_ota_config(self):
         """设置OTA配置 - 委托给 NetworkManager"""
+        if self.URL1_var is None or self.URL2_var is None or self.URL3_var is None or self.URL4_var is None:
+            self.log_message("Error: OTA variables not initialized!")
+            return
+            
         url1 = self.URL1_var.get().strip()
         url2 = self.URL2_var.get().strip()
         url3 = self.URL3_var.get().strip()
@@ -708,6 +771,10 @@ class StableSensorCalibrator:
 
     def set_mqtt_config(self):
         """设置MQTT配置 - 委托给 NetworkManager"""
+        if self.mqtt_broker_var is None or self.mqtt_user_var is None or self.mqtt_password_var is None or self.mqtt_port_var is None:
+            self.log_message("Error: MQTT variables not initialized!")
+            return
+            
         broker = self.mqtt_broker_var.get().strip()
         username = self.mqtt_user_var.get().strip()
         password = self.mqtt_password_var.get().strip()
@@ -787,18 +854,28 @@ class StableSensorCalibrator:
         
         # 更新UI变量
         if self.wifi_params.get('ssid'):
-            self.ssid_var.set(self.wifi_params['ssid'])
-            self.password_var.set(self.wifi_params.get('password', ''))
+            if self.ssid_var is not None:
+                self.ssid_var.set(self.wifi_params['ssid'])
+            if self.password_var is not None:
+                self.password_var.set(self.wifi_params.get('password', ''))
         if self.mqtt_params.get('broker'):
-            self.mqtt_broker_var.set(self.mqtt_params['broker'])
-            self.mqtt_user_var.set(self.mqtt_params.get('username', ''))
-            self.mqtt_password_var.set(self.mqtt_params.get('password', ''))
-            self.mqtt_port_var.set(self.mqtt_params.get('port', '1883'))
+            if self.mqtt_broker_var is not None:
+                self.mqtt_broker_var.set(self.mqtt_params['broker'])
+            if self.mqtt_user_var is not None:
+                self.mqtt_user_var.set(self.mqtt_params.get('username', ''))
+            if self.mqtt_password_var is not None:
+                self.mqtt_password_var.set(self.mqtt_params.get('password', ''))
+            if self.mqtt_port_var is not None:
+                self.mqtt_port_var.set(self.mqtt_params.get('port', '1883'))
         if self.ota_params.get('URL1') or self.ota_params.get('URL2'):
-            self.URL1_var.set(self.ota_params.get('URL1', ''))
-            self.URL2_var.set(self.ota_params.get('URL2', ''))
-            self.URL3_var.set(self.ota_params.get('URL3', ''))
-            self.URL4_var.set(self.ota_params.get('URL4', ''))
+            if self.URL1_var is not None:
+                self.URL1_var.set(self.ota_params.get('URL1', ''))
+            if self.URL2_var is not None:
+                self.URL2_var.set(self.ota_params.get('URL2', ''))
+            if self.URL3_var is not None:
+                self.URL3_var.set(self.ota_params.get('URL3', ''))
+            if self.URL4_var is not None:
+                self.URL4_var.set(self.ota_params.get('URL4', ''))
     
     def extract_and_display_alarm_threshold(self):
         """
@@ -832,28 +909,28 @@ class StableSensorCalibrator:
 
     def enable_config_buttons(self):
         """启用配置按钮"""
-        if hasattr(self, "set_wifi_btn"):
+        if self.set_wifi_btn is not None:
             self.set_wifi_btn.config(state="normal")
-        if hasattr(self, "read_wifi_btn"):
+        if self.read_wifi_btn is not None:
             self.read_wifi_btn.config(state="normal")
-        if hasattr(self, "set_mqtt_btn"):
+        if self.set_mqtt_btn is not None:
             self.set_mqtt_btn.config(state="normal")
-        if hasattr(self, "read_mqtt_btn"):
+        if self.read_mqtt_btn is not None:
             self.read_mqtt_btn.config(state="normal")
-        if hasattr(self, "set_ota_btn"):
+        if self.set_ota_btn is not None:
             self.set_ota_btn.config(state="normal")
-        if hasattr(self, "read_ota_btn"):
+        if self.read_ota_btn is not None:
             self.read_ota_btn.config(state="normal")
-        if hasattr(self, "local_coord_btn"):
+        if self.local_coord_btn is not None:
             self.local_coord_btn.config(state="normal")
-        if hasattr(self, "global_coord_btn"):
+        if self.global_coord_btn is not None:
             self.global_coord_btn.config(state="normal")
         # 启用 Alarm & Device 标签页按钮
-        if hasattr(self, "set_alarm_threshold_btn"):
+        if self.set_alarm_threshold_btn is not None:
             self.set_alarm_threshold_btn.config(state="normal")
-        if hasattr(self, "save_config_btn"):
+        if self.save_config_btn is not None:
             self.save_config_btn.config(state="normal")
-        if hasattr(self, "restart_sensor_btn"):
+        if self.restart_sensor_btn is not None:
             self.restart_sensor_btn.config(state="normal")
 
     def display_network_summary(self):
@@ -959,7 +1036,7 @@ class StableSensorCalibrator:
     def _add_log_entry(self, log_entry):
         """在主线程中添加日志条目"""
         try:
-            if hasattr(self, 'log_text') and self.log_text.winfo_exists():
+            if self.log_text is not None and self.log_text.winfo_exists():
                 self.log_text.insert(tk.END, log_entry + "\n")
                 self.log_text.see(tk.END)
         except Exception:
@@ -967,33 +1044,52 @@ class StableSensorCalibrator:
 
     def toggle_connection(self):
         """切换串口连接"""
+        if self.port_var is None or self.baud_var is None:
+            self.log_message("Error: Port variables not initialized!")
+            return
+            
         port = self.port_var.get()
         baudrate = int(self.baud_var.get())
         
         if self.serial_manager.is_connected:
             self.disconnect_serial()
-            self.connect_btn.config(text="Connect")
-            self.data_btn.config(state="disabled")
-            self.data_btn2.config(state="disabled")
-            self.read_props_btn.config(state="disabled")
+            if self.connect_btn is not None:
+                self.connect_btn.config(text="Connect")
+            if self.data_btn is not None:
+                self.data_btn.config(state="disabled")
+            if self.data_btn2 is not None:
+                self.data_btn2.config(state="disabled")
+            if self.read_props_btn is not None:
+                self.read_props_btn.config(state="disabled")
         else:
             if self.serial_manager.connect(port, baudrate):
-                self.connect_btn.config(text="Disconnect")
-                self.data_btn.config(state="normal")
-                self.data_btn2.config(state="normal")
+                if self.connect_btn is not None:
+                    self.connect_btn.config(text="Disconnect")
+                if self.data_btn is not None:
+                    self.data_btn.config(state="normal")
+                if self.data_btn2 is not None:
+                    self.data_btn2.config(state="normal")
                 self.ser = self.serial_manager.serial_port
         
-        self.read_props_btn.config(state="normal")
+        if self.read_props_btn is not None:
+            self.read_props_btn.config(state="normal")
 
     def connect_serial(self):
         """连接串口 - 委托给 SerialManager"""
+        if self.port_var is None or self.baud_var is None:
+            self.log_message("Error: Port variables not initialized!")
+            return
+            
         port = self.port_var.get()
         baudrate = int(self.baud_var.get())
         
         if self.serial_manager.connect(port, baudrate):
-            self.connect_btn.config(text="Disconnect")
-            self.data_btn.config(state="normal")
-            self.data_btn2.config(state="normal")
+            if self.connect_btn is not None:
+                self.connect_btn.config(text="Disconnect")
+            if self.data_btn is not None:
+                self.data_btn.config(state="normal")
+            if self.data_btn2 is not None:
+                self.data_btn2.config(state="normal")
             self.ser = self.serial_manager.serial_port
 
     def disconnect_serial(self):
@@ -1002,19 +1098,26 @@ class StableSensorCalibrator:
         self.ser = None
         
         # 禁用按钮
-        self.connect_btn.config(text="Connect")
-        self.data_btn.config(text="Start Data Stream")
-        self.data_btn.config(state="disabled")
-        self.data_btn2.config(text="Start CAS Stream")
-        self.data_btn2.config(state="disabled")
-        self.read_props_btn.config(state="disabled")
-        self.resend_btn.config(state="disabled")
-        if hasattr(self, "local_coord_btn"):
+        if self.connect_btn is not None:
+            self.connect_btn.config(text="Connect")
+        if self.data_btn is not None:
+            self.data_btn.config(text="Start Data Stream")
+            self.data_btn.config(state="disabled")
+        if self.data_btn2 is not None:
+            self.data_btn2.config(text="Start CAS Stream")
+            self.data_btn2.config(state="disabled")
+        if self.read_props_btn is not None:
+            self.read_props_btn.config(state="disabled")
+        if self.resend_btn is not None:
+            self.resend_btn.config(state="disabled")
+        if self.local_coord_btn is not None:
             self.local_coord_btn.config(state="disabled")
-        if hasattr(self, "global_coord_btn"):
+        if self.global_coord_btn is not None:
             self.global_coord_btn.config(state="disabled")
-        self.calibrate_btn.config(state="disabled")
-        self.send_btn.config(state="disabled")
+        if self.calibrate_btn is not None:
+            self.calibrate_btn.config(state="disabled")
+        if self.send_btn is not None:
+            self.send_btn.config(state="disabled")
 
     def toggle_data_stream(self):
         """切换数据流状态"""
@@ -1047,8 +1150,10 @@ class StableSensorCalibrator:
         if self.serial_manager.send_ss0_start_stream():
             if self.serial_manager.start_reading():
                 self.is_reading = True
-                self.data_btn.config(text="Stop Data Stream")
-                self.calibrate_btn.config(state="normal")
+                if self.data_btn is not None:
+                    self.data_btn.config(text="Stop Data Stream")
+                if self.calibrate_btn is not None:
+                    self.calibrate_btn.config(state="normal")
                 
                 # 重置数据
                 self.clear_data()
@@ -1068,8 +1173,10 @@ class StableSensorCalibrator:
         if self.serial_manager.send_ss1_start_calibration():
             if self.serial_manager.start_reading():
                 self.is_reading = True
-                self.data_btn2.config(text="Stop Calibration Stream")
-                self.calibrate_btn.config(state="disabled")
+                if self.data_btn2 is not None:
+                    self.data_btn2.config(text="Stop Calibration Stream")
+                if self.calibrate_btn is not None:
+                    self.calibrate_btn.config(state="disabled")
                 
                 # 重置数据
                 self.clear_data()
@@ -1090,10 +1197,12 @@ class StableSensorCalibrator:
         self.serial_manager.send_ss4_stop_stream()
 
         # 更新UI状态
-        self.data_btn.config(text="Start Data Stream")
-        self.data_btn.config(state="normal")
-        self.calibrate_btn.config(state="disabled")
-        if hasattr(self, "capture_btn"):
+        if self.data_btn is not None:
+            self.data_btn.config(text="Start Data Stream")
+            self.data_btn.config(state="normal")
+        if self.calibrate_btn is not None:
+            self.calibrate_btn.config(state="disabled")
+        if self.capture_btn is not None:
             self.capture_btn.config(state="disabled")
 
     def stop_data_stream2(self):
@@ -1106,10 +1215,12 @@ class StableSensorCalibrator:
         self.serial_manager.send_ss4_stop_stream()
 
         # 更新UI状态
-        self.data_btn2.config(text="Start CAS Stream")
-        self.data_btn2.config(state="normal")
-        self.calibrate_btn.config(state="disabled")
-        if hasattr(self, "capture_btn"):
+        if self.data_btn2 is not None:
+            self.data_btn2.config(text="Start CAS Stream")
+            self.data_btn2.config(state="normal")
+        if self.calibrate_btn is not None:
+            self.calibrate_btn.config(state="disabled")
+        if self.capture_btn is not None:
             self.capture_btn.config(state="disabled")
 
     def parse_sensor_data(self, data_string):
@@ -1194,24 +1305,26 @@ class StableSensorCalibrator:
         """更新激活状态显示 - 在 Activation 区域显示"""
         if self.sensor_activated:
             # 更新 Activation 区域
-            self.activation_status_var.set("Activated")
+            if self.activation_status_var is not None:
+                self.activation_status_var.set("Activated")
             if hasattr(self, "ui_manager"):
                 self.ui_manager.update_statistics_label('activation_status', "Activated")
                 status_label = self.ui_manager.get_widget('activation_status_label')
                 if status_label:
                     status_label.config(foreground="green")
-            if hasattr(self, "activate_btn"):
+            if self.activate_btn is not None:
                 self.activate_btn.config(state="disabled")
         else:
             # 更新 Activation 区域
-            self.activation_status_var.set("Not Activated")
+            if self.activation_status_var is not None:
+                self.activation_status_var.set("Not Activated")
             if hasattr(self, "ui_manager"):
                 self.ui_manager.update_statistics_label('activation_status', "Not Activated")
                 status_label = self.ui_manager.get_widget('activation_status_label')
                 if status_label:
                     status_label.config(foreground="red")
             if (
-                hasattr(self, "activate_btn")
+                self.activate_btn is not None
                 and self.mac_address
                 and self.generated_key
             ):
@@ -1224,7 +1337,7 @@ class StableSensorCalibrator:
 
         if self.mac_address:
             # 确保mac_var存在（兼容性）
-            if hasattr(self, "mac_var"):
+            if hasattr(self, "mac_var") and self.mac_var is not None:
                 self.mac_var.set(self.mac_address)
             
             # 更新新的UI变量（Activation区域显示）
@@ -1253,9 +1366,9 @@ class StableSensorCalibrator:
             self.update_activation_status()
 
             # 启用激活按钮
-            if not self.sensor_activated and hasattr(self, "activate_btn"):
+            if not self.sensor_activated and self.activate_btn is not None:
                 self.activate_btn.config(state="normal")
-                if hasattr(self, "verify_btn"):
+                if self.verify_btn is not None:
                     self.verify_btn.config(state="normal")
             
             # 启用复制密钥按钮
@@ -1267,7 +1380,7 @@ class StableSensorCalibrator:
             )
         else:
             self.log_message("Warning: MAC address not found in sensor properties")
-            if hasattr(self, "mac_var"):
+            if hasattr(self, "mac_var") and self.mac_var is not None:
                 self.mac_var.set("Not found")
             if hasattr(self, "ui_manager"):
                 self.ui_manager.set_entry_value('activation_mac', "Not found")
@@ -1354,7 +1467,8 @@ class StableSensorCalibrator:
                 self.serial_freq = self.packets_received
                 self.packets_received = 0
                 self.last_freq_update = current_time
-                self.freq_var.set(f"{self.serial_freq} Hz")
+                if self.freq_var is not None:
+                    self.freq_var.set(f"{self.serial_freq} Hz")
 
             # 处理数据队列
             processed_count = 0
@@ -1441,9 +1555,9 @@ class StableSensorCalibrator:
             mean_key = f"mpu_accel_{axis_names[i]}_mean"
             std_key = f"mpu_accel_{axis_names[i]}_std"
             
-            if mean_key in self.stats_labels:
+            if mean_key in self.stats_labels and self.stats_labels[mean_key] is not None:
                 self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
-            if std_key in self.stats_labels:
+            if std_key in self.stats_labels and self.stats_labels[std_key] is not None:
                 self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
         
         # 更新ADXL355加速度计统计
@@ -1453,9 +1567,9 @@ class StableSensorCalibrator:
             mean_key = f"adxl_accel_{axis_names[i]}_mean"
             std_key = f"adxl_accel_{axis_names[i]}_std"
             
-            if mean_key in self.stats_labels:
+            if mean_key in self.stats_labels and self.stats_labels[mean_key] is not None:
                 self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
-            if std_key in self.stats_labels:
+            if std_key in self.stats_labels and self.stats_labels[std_key] is not None:
                 self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
         
         # 更新MPU6050陀螺仪统计
@@ -1465,18 +1579,18 @@ class StableSensorCalibrator:
             mean_key = f"mpu_gyro_{axis_names[i]}_mean"
             std_key = f"mpu_gyro_{axis_names[i]}_std"
             
-            if mean_key in self.stats_labels:
+            if mean_key in self.stats_labels and self.stats_labels[mean_key] is not None:
                 self.stats_labels[mean_key].set(f"Mean: {mean_val:6.3f}")
-            if std_key in self.stats_labels:
+            if std_key in self.stats_labels and self.stats_labels[std_key] is not None:
                 self.stats_labels[std_key].set(f"Std: {std_val:6.3f}")
         
         # 更新重力矢量统计
         mean_val = self.real_time_stats["gravity_mean"]
         std_val = self.real_time_stats["gravity_std"]
         
-        if "gravity_mean" in self.stats_labels:
+        if "gravity_mean" in self.stats_labels and self.stats_labels["gravity_mean"] is not None:
             self.stats_labels["gravity_mean"].set(f"Mean: {mean_val:6.3f}")
-        if "gravity_std" in self.stats_labels:
+        if "gravity_std" in self.stats_labels and self.stats_labels["gravity_std"] is not None:
             self.stats_labels["gravity_std"].set(f"Std: {std_val:6.3f}")
 
     def safe_update_statistics(self):
@@ -1545,6 +1659,10 @@ class StableSensorCalibrator:
 
     def adjust_y_limits(self):
         """调整Y轴范围 - 优化版（使用numpy向量化计算）"""
+        # 检查图表轴是否可用（向后兼容）
+        if self.ax1 is None or self.ax2 is None or self.ax3 is None or self.ax4 is None:
+            return
+            
         # MPU6050加速度计
         if self.mpu_accel_data[0] and len(self.mpu_accel_data[0]) > 0:
             recent_points = min(Config.DISPLAY_DATA_POINTS, len(self.mpu_accel_data[0]))
@@ -1631,19 +1749,24 @@ class StableSensorCalibrator:
         
         self.is_calibrating = True
         self.calibration_workflow.start_calibration()
-        self.calibrate_btn.config(state="disabled")
-        self.capture_btn.config(state="normal")
-        self.data_btn.config(state="disabled")
+        if self.calibrate_btn is not None:
+            self.calibrate_btn.config(state="disabled")
+        if self.capture_btn is not None:
+            self.capture_btn.config(state="normal")
+        if self.data_btn is not None:
+            self.data_btn.config(state="disabled")
 
     def capture_position(self):
         """采集当前位置数据 - 委托给 CalibrationWorkflow"""
-        self.capture_btn.config(state="disabled")
+        if self.capture_btn is not None:
+            self.capture_btn.config(state="disabled")
         self.calibration_workflow.capture_position()
 
     def update_position_display(self):
         """更新位置显示"""
         if hasattr(self, 'calibration_workflow'):
-            self.position_label.config(text=self.calibration_workflow.position_progress)
+            if self.position_label is not None:
+                self.position_label.config(text=self.calibration_workflow.position_progress)
 
     def finish_calibration(self):
         """完成校准 - 委托给 CalibrationWorkflow"""
@@ -1658,9 +1781,10 @@ class StableSensorCalibrator:
         commands = self.calibration_workflow.generate_calibration_commands()
         
         # 显示命令
-        self.cmd_text.delete(1.0, tk.END)
-        for cmd in commands:
-            self.cmd_text.insert(tk.END, cmd + "\n")
+        if self.cmd_text is not None:
+            self.cmd_text.delete(1.0, tk.END)
+            for cmd in commands:
+                self.cmd_text.insert(tk.END, cmd + "\n")
         
         self.log_message(
             "Calibration commands generated. Click 'Send All Commands' to send to ESP32."
@@ -1673,6 +1797,10 @@ class StableSensorCalibrator:
             return
 
         # 获取命令
+        if self.cmd_text is None:
+            self.log_message("Error: Command text widget not available!")
+            return
+            
         commands = self.cmd_text.get(1.0, tk.END).strip().split("\n")
 
         if not commands or commands[0] == "":
@@ -1688,6 +1816,9 @@ class StableSensorCalibrator:
 
     def send_commands_thread(self, commands):
         """在新线程中发送命令"""
+        if self.ser is None:
+            return
+            
         try:
             for i, cmd in enumerate(commands):
                 if cmd.strip():  # 跳过空行
@@ -1703,6 +1834,8 @@ class StableSensorCalibrator:
 
                     # 尝试读取响应（可选）
                     try:
+                        if self.ser is None:
+                            continue
                         response = self.ser.readline().decode().strip()
                         if response:
                             self.root.after(
@@ -1717,7 +1850,7 @@ class StableSensorCalibrator:
             )
 
             # 启用重新发送按钮
-            self.root.after(0, lambda: self.resend_btn.config(state="normal"))
+            self.root.after(0, lambda: self.resend_btn.config(state="normal") if self.resend_btn is not None else None)
 
             # 询问是否读取传感器属性
             self.root.after(0, self.ask_read_properties)
@@ -1738,6 +1871,10 @@ class StableSensorCalibrator:
 
     def save_calibration_parameters(self):
         """保存校准参数到文件"""
+        if self.cmd_text is None:
+            self.log_message("Error: Command text widget not available!")
+            return
+            
         try:
             # 创建保存的数据结构
             save_data = {
@@ -1791,7 +1928,7 @@ class StableSensorCalibrator:
                     )
 
                 # 更新命令文本
-                if "calibration_commands" in loaded_data:
+                if "calibration_commands" in loaded_data and self.cmd_text is not None:
                     self.cmd_text.delete(1.0, tk.END)
                     for cmd in loaded_data["calibration_commands"]:
                         self.cmd_text.insert(tk.END, cmd + "\n")
@@ -1801,9 +1938,12 @@ class StableSensorCalibrator:
                     self.sensor_properties = loaded_data["sensor_properties"]
 
                 self.log_message(f"Calibration parameters loaded from: {filename}")
-                self.send_btn.config(state="normal")
-                self.save_btn.config(state="normal")
-                self.read_props_btn.config(state="normal")
+                if self.send_btn is not None:
+                    self.send_btn.config(state="normal")
+                if self.save_btn is not None:
+                    self.save_btn.config(state="normal")
+                if self.read_props_btn is not None:
+                    self.read_props_btn.config(state="normal")
 
         except Exception as e:
             self.log_message(f"Error loading calibration parameters: {str(e)}")
@@ -1831,6 +1971,9 @@ class StableSensorCalibrator:
 
     def read_properties_thread(self):
         """在新线程中读取传感器属性"""
+        if self.ser is None:
+            return
+            
         original_reading_state = self.is_reading
 
         try:
@@ -1858,6 +2001,8 @@ class StableSensorCalibrator:
             self.root.after(0, lambda: self.log_message("Reading response..."))
 
             while time.time() - start_time < timeout:
+                if self.ser is None:
+                    break
                 if self.ser.in_waiting > 0:
                     chunk = self.ser.read(self.ser.in_waiting)
                     response_bytes += chunk
@@ -2125,9 +2270,12 @@ class StableSensorCalibrator:
     def reset_calibration_state(self):
         """重置校准状态"""
         self.is_calibrating = False
-        self.calibrate_btn.config(state="normal")
-        self.capture_btn.config(state="disabled")
-        self.data_btn.config(state="normal")
+        if self.calibrate_btn is not None:
+            self.calibrate_btn.config(state="normal")
+        if self.capture_btn is not None:
+            self.capture_btn.config(state="disabled")
+        if self.data_btn is not None:
+            self.data_btn.config(state="normal")
         self.log_message("Calibration state reset")
 
     # ==================== Alarm & Device 回调方法 ====================

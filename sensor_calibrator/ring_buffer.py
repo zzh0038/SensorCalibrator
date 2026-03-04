@@ -160,6 +160,10 @@ class QueueAdapter:
         """兼容 Queue.put_nowait 接口"""
         self._buffer.put(item)
     
+    def put_batch(self, items):
+        """批量放入元素（高效率接口）"""
+        self._buffer.put_batch(items)
+    
     def get(self, block=True, timeout=None):
         """兼容 Queue.get 接口"""
         item = self._buffer.get()
