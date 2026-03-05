@@ -165,54 +165,49 @@ class ActivationWorkflow:
     def verify_key(self, input_key: str, mac_address: Optional[str] = None) -> bool:
         """
         验证输入的密钥是否与基于MAC地址生成的密钥匹配
-        
+
         Args:
             input_key: 输入的密钥
             mac_address: MAC地址（可选，使用已存储的）
-            
+
         Returns:
             bool: 是否匹配
         """
-        self._log_message(f"[DEBUG] verify_key called with input: {input_key}, len={len(input_key) if input_key else 0}")
-        
         mac = mac_address or self._mac_address
         if not mac:
-            self._log_message("[DEBUG] No MAC address available")
             return False
-        
+
         # 生成预期密钥
         expected_key = self.generate_key_from_mac(mac)
         expected_fragment = expected_key[5:12]
-        
-        self._log_message(f"[DEBUG] Expected fragment: {expected_fragment}")
-        self._log_message(f"[DEBUG] Input key: {input_key}")
-        
+
         # 使用恒定时间比较防止时序攻击
         if len(input_key) != 7 or len(expected_key) != 64:
-            self._log_message(f"[DEBUG] Length check failed: input_len={len(input_key)}, expected_len={len(expected_key)}")
             return False
-        
-        result = secrets.compare_digest(input_key.lower(), expected_fragment.lower())
-        self._log_message(f"[DEBUG] Compare result: {result}")
-        return result
+
+        return secrets.compare_digest(input_key.lower(), expected_fragment.lower())
     
-    def check_activation_status(self, sensor_properties: Dict[str, Any]) -> bool:
+    def check_activation_status(
+        self,
+        sensor_properties: Dict[str, Any],
+        mac_address: Optional[str] = None
+    ) -> bool:
         """
         检查传感器激活状态
-        
+
         Args:
             sensor_properties: 传感器属性字典
-            
+            mac_address: MAC地址（可选，优先于内部状态）
+
         Returns:
             bool: 是否已激活
         """
-        self._log_message(f"[DEBUG] check_activation_status called")
-        self._log_message(f"[DEBUG] MAC in workflow: {self._mac_address}")
-        
-        if not sensor_properties or not self._mac_address:
-            self._log_message(f"[DEBUG] Missing data: properties={bool(sensor_properties)}, mac={bool(self._mac_address)}")
+        # 优先使用传入的参数，保持向后兼容
+        mac = mac_address or self._mac_address
+
+        if not sensor_properties or not mac:
             return False
-        
+
         # 从属性中获取AKY字段
         aks_value = None
         if "sys" in sensor_properties:
@@ -220,18 +215,14 @@ class ActivationWorkflow:
             aks_value = (
                 sys_info.get("AKY") or sys_info.get("aky") or sys_info.get("ak_key")
             )
-        
-        self._log_message(f"[DEBUG] AKY value: {aks_value}")
-        
+
         if not aks_value:
             self._is_activated = False
-            self._log_message("[DEBUG] No AKY value found")
             return False
-        
-        # 验证密钥
+
+        # 验证密钥（传入 MAC 地址）
         try:
-            self._is_activated = self.verify_key(aks_value)
-            self._log_message(f"[DEBUG] verify_key result: {self._is_activated}")
+            self._is_activated = self.verify_key(aks_value, mac_address=mac)
             return self._is_activated
         except Exception as e:
             self._log_message(f"Error verifying activation key: {str(e)}")
@@ -239,60 +230,89 @@ class ActivationWorkflow:
     
     # ==================== 激活操作 ====================
     
-    def activate_sensor(self) -> bool:
+    def activate_sensor(
+        self,
+        mac_address: Optional[str] = None,
+        generated_key: Optional[str] = None
+    ) -> bool:
         """
         激活传感器
-        
+
+        Args:
+            mac_address: MAC地址（可选，优先于内部状态）
+            generated_key: 生成的密钥（可选，优先于内部状态）
+
         Returns:
             bool: 是否成功启动激活流程
         """
         if 'is_connected' in self.callbacks and not self.callbacks['is_connected']():
             self._log_message("Error: Not connected to serial port!")
             return False
-        
-        if not self._mac_address or not self._generated_key:
+
+        # 优先使用传入的参数
+        mac = mac_address or self._mac_address
+        key = generated_key or self._generated_key
+
+        if not mac or not key:
             self._log_message("Error: MAC address or generated key not available!")
             return False
-        
+
+        # 保存到内部状态（供线程使用）
+        self._mac_address = mac
+        self._generated_key = key
+
         self._log_message("Starting sensor activation process...")
-        
-        # 在新线程中激活传感器
-        threading.Thread(target=self._activate_sensor_thread, daemon=True).start()
-        
+
+        # 在新线程中激活传感器，传递参数
+        threading.Thread(
+            target=self._activate_sensor_thread,
+            args=(mac, key),
+            daemon=True
+        ).start()
+
         return True
     
-    def _activate_sensor_thread(self) -> None:
-        """在新线程中激活传感器"""
+    def _activate_sensor_thread(
+        self,
+        mac_address: str,
+        generated_key: str
+    ) -> None:
+        """在新线程中激活传感器
+
+        Args:
+            mac_address: MAC地址
+            generated_key: 生成的密钥
+        """
         try:
             # 停止数据流（如果正在运行）
             original_reading_state = False
             if 'is_reading' in self.callbacks:
                 original_reading_state = self.callbacks['is_reading']()
-            
+
             if original_reading_state and 'stop_data_stream' in self.callbacks:
                 self._log_message("Stopping data stream for activation...")
                 self.callbacks['stop_data_stream']()
                 time.sleep(1.0)
-            
+
             # 获取串口
             ser = None
             if 'get_serial_port' in self.callbacks:
                 ser = self.callbacks['get_serial_port']()
-            
+
             if not ser:
                 self._log_message("Error: Serial port not available")
                 return
-            
+
             # 清空输入缓冲区
             ser.reset_input_buffer()
             time.sleep(Config.BUFFER_CLEAR_DELAY)
-            
+
             # 发送激活命令
-            activation_cmd = f"SET:AKY,{self._generated_key[5:12]}"
+            activation_cmd = f"SET:AKY,{generated_key[5:12]}"
             ser.write(activation_cmd.encode())
             ser.flush()
-            
-            self._log_message(f"Sent activation command: SET:AKY,{self._generated_key[5:12]}")
+
+            self._log_message(f"Sent activation command: SET:AKY,{generated_key[5:12]}")
             
             # 等待响应
             time.sleep(2.0)

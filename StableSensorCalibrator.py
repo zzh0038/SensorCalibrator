@@ -186,7 +186,8 @@ class StableSensorCalibrator:
             from ctypes import windll
 
             windll.shcore.SetProcessDpiAwareness(1)
-        except:
+        except (ImportError, AttributeError, OSError):
+            # DPI awareness 仅在 Windows 可用，失败不影响核心功能
             pass
 
         self.root = tk.Tk()
@@ -206,7 +207,8 @@ class StableSensorCalibrator:
         # 设置窗口图标
         try:
             self.root.iconbitmap(default="icon.ico")
-        except:
+        except tk.TclError:
+            # 图标文件缺失或损坏不影响核心功能
             pass
 
         # 配置网格权重 - 关键修改：调整列权重比例
@@ -592,8 +594,15 @@ class StableSensorCalibrator:
         if response:
             self.exiting = True
             self.cleanup()
+            # 使用 after 延迟销毁窗口，避免阻塞主线程
             if self.root is not None:
-                self.root.destroy()
+                delay_ms = int(Config.SERIAL_CLEANUP_DELAY * 1000)
+                self.root.after(delay_ms, self._do_destroy)
+
+    def _do_destroy(self):
+        """执行实际的窗口销毁"""
+        if self.root is not None:
+            self.root.destroy()
 
     def cleanup(self):
         """清理资源，确保安全退出"""
@@ -622,24 +631,27 @@ class StableSensorCalibrator:
         self.stop_all_threads()
 
         # 5. 清理matplotlib资源
-        if hasattr(self, "fig"):
+        if hasattr(self, "fig") and self.fig is not None:
             try:
                 plt.close(self.fig)
-            except:
+            except (ValueError, AttributeError):
+                # Figure 可能已被关闭或无效
                 pass
+            finally:
+                self.fig = None  # 确保清理引用
 
         self.log_message("清理完成，程序即将退出")
-        time.sleep(Config.SERIAL_CLEANUP_DELAY)  # 短暂延迟确保清理完成
 
     def cancel_all_after_tasks(self):
         """取消所有after任务"""
         if self.root is None:
             return
             
-        for task_id in self.after_tasks:
+        for task_id in list(self.after_tasks):  # 创建副本
             try:
                 self.root.after_cancel(task_id)
-            except:
+            except tk.TclError:
+                # 任务可能已执行或无效 ID，安全忽略
                 pass
         self.after_tasks.clear()
         
@@ -647,37 +659,54 @@ class StableSensorCalibrator:
         if self._window_move_timer:
             try:
                 self.root.after_cancel(self._window_move_timer)
-            except:
+            except tk.TclError:
                 pass
-            self._window_move_timer = None
+            finally:
+                self._window_move_timer = None
 
     def _on_window_configure(self, event):
         """窗口移动/调整大小事件处理 - 性能优化"""
-        if not hasattr(self, 'root') or not self.root:
-            return
-        
-        # 检查窗口位置是否改变
         try:
-            current_pos = (self.root.winfo_x(), self.root.winfo_y())
-            if current_pos != self._last_window_pos:
+            if not hasattr(self, 'root') or self.root is None:
+                return
+            
+            # 获取当前窗口位置
+            try:
+                current_pos = (self.root.winfo_x(), self.root.winfo_y())
+            except tk.TclError:
+                # 窗口可能已销毁
+                return
+            
+            # 检查位置是否变化
+            if not hasattr(self, '_last_window_pos'):
                 self._last_window_pos = current_pos
-                self._window_moving = True
-                self._window_configure_count += 1
-                
-                # 取消之前的定时器
-                if self._window_move_timer and self.root is not None:
-                    try:
-                        self.root.after_cancel(self._window_move_timer)
-                    except:
-                        pass
-                
-                # 设置新的定时器，延迟后恢复更新
-                if self.root is not None:
+                return
+            
+            if current_pos == self._last_window_pos:
+                return
+            
+            self._last_window_pos = current_pos
+            self._window_moving = True
+            self._window_configure_count += 1
+            
+            # 取消之前的定时器
+            if self._window_move_timer and self.root is not None:
+                try:
+                    self.root.after_cancel(self._window_move_timer)
+                except tk.TclError:
+                    pass
+            
+            # 设置新的定时器，延迟后恢复更新
+            if self.root is not None:
+                try:
                     self._window_move_timer = self.root.after(
-                        Config.WINDOW_MOVE_PAUSE_DELAY, 
+                        Config.WINDOW_MOVE_PAUSE_DELAY,
                         self._on_window_move_end
                     )
-        except:
+                except tk.TclError:
+                    pass
+        except Exception:
+            # 最后一层保险：窗口移动优化失败不应影响核心功能
             pass
     
     def _on_window_move_end(self):
@@ -721,11 +750,16 @@ class StableSensorCalibrator:
                 time.sleep(Config.THREAD_ERROR_DELAY)
 
         # 清除数据队列
-        if hasattr(self, "data_queue"):
+        if hasattr(self, "data_queue") and self.data_queue is not None:
             try:
                 while not self.data_queue.empty():
-                    self.data_queue.get_nowait()
-            except:
+                    try:
+                        self.data_queue.get_nowait()
+                    except queue.Empty:
+                        # 竞态条件：empty() 检查后变为空
+                        break
+            except AttributeError:
+                # data_queue 可能已被设置为 None
                 pass
 
         # 清空数据缓冲区（支持deque）
@@ -1256,38 +1290,26 @@ class StableSensorCalibrator:
 
     def check_activation_status(self) -> bool:
         """检查传感器激活状态 - 委托给 ActivationWorkflow"""
-        # 同步 MAC 地址到 ActivationWorkflow
-        if self.mac_address:
-            self.activation_workflow._mac_address = self.mac_address
-            # MAC address synced successfully
-        else:
-            pass  # MAC address is None
-            
-        # 检查传感器属性
         if not self.sensor_properties:
-            pass  # sensor_properties is empty
             return False
-            
-        # 检查AKY字段
-        aky = None
-        if "sys" in self.sensor_properties:
-            sys_info = self.sensor_properties["sys"]
-            aky = sys_info.get("AKY") or sys_info.get("aky") or sys_info.get("ak_key")
-            pass  # AKY retrieved from sensor
-        else:
-            pass  # No 'sys' section in sensor_properties
-        
-        is_activated = self.activation_workflow.check_activation_status(self.sensor_properties)
+
+        is_activated = self.activation_workflow.check_activation_status(
+            self.sensor_properties,
+            mac_address=self.mac_address
+        )
         self.sensor_activated = is_activated
-        pass  # Activation check completed
         return is_activated
 
     def activate_sensor(self):
         """激活传感器 - 委托给 ActivationWorkflow"""
-        # 同步参数
-        self.activation_workflow._mac_address = self.mac_address
-        self.activation_workflow._generated_key = self.generated_key
-        self.activation_workflow.activate_sensor()
+        if not self.mac_address or not self.generated_key:
+            self.log_message("Error: MAC address or key not available")
+            return
+
+        self.activation_workflow.activate_sensor(
+            mac_address=self.mac_address,
+            generated_key=self.generated_key
+        )
 
     def verify_activation(self):
         """验证传感器激活状态 - 委托给 ActivationWorkflow"""
@@ -1833,8 +1855,16 @@ class StableSensorCalibrator:
                             self.root.after(
                                 0, lambda r=response: self.log_message(f"Response: {r}")
                             )
-                    except:
+                    except serial.SerialException:
+                        # 串口错误已在其他地方处理
                         pass
+                    except UnicodeDecodeError:
+                        # 收到非 UTF-8 数据，记录原始字节
+                        try:
+                            raw_data = self.ser.readline()
+                            self.log_message(f"Received non-UTF8 data: {raw_data.hex()}")
+                        except serial.SerialException:
+                            pass
 
             self.root.after(
                 0,
@@ -2367,12 +2397,6 @@ class StableSensorCalibrator:
         finally:
             if not self.exiting:
                 self.cleanup()
-
-    def __del__(self):
-        """析构函数，确保资源被清理"""
-        if not self.exiting:
-            self.cleanup()
-
 
 # 运行程序
 if __name__ == "__main__":

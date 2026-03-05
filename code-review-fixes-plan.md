@@ -1,191 +1,328 @@
-# Plan: 代码审查问题修复（中高优先级）
+# 代码审查问题修复计划
 
-**Generated**: 2026-03-02
-**Estimated Complexity**: Low
-**Scope**: 选项B - 修复中高优先级问题（🔴+🟡）
+**Generated**: 2026-03-05
+**Estimated Complexity**: Medium
+**Priority**: High
 
-## Overview
-根据代码审查发现的中高优先级问题，进行系统性修复，包括类型注解完善、异常处理优化、代码结构改进、性能优化和文档补充。所有修改保持向后兼容。
+## 概述
 
-## Prerequisites
-- Python 3.8+
-- 现有测试用例全部通过
-- 不涉及mypy等额外类型检查工具（仅通过运行测试验证）
+根据代码审查报告，本计划涵盖 StableSensorCalibrator.py、serial_manager.py 和相关模块中的关键问题修复。所有修复旨在提高代码可靠性、可维护性和性能。
+
+## 修复优先级
+
+| 优先级 | 问题 | 影响 |
+|--------|------|------|
+| 🔴 P0 | Bare except 块 | 可能捕获 KeyboardInterrupt, SystemExit |
+| 🔴 P0 | SerialManager Race Condition | 可能丢失串口响应 |
+| 🔴 P0 | 主线程 Sleep 阻塞 UI | UI 无响应 |
+| 🟡 P1 | 私有属性访问破坏封装 | 维护困难，易出错 |
+| 🟡 P1 | `__del__` 不可靠清理 | 资源泄露风险 |
+| 🟢 P2 | 循环导入风险 | 潜在启动问题 |
+| 🟢 P2 | 硬编码路径 | 可移植性差 |
 
 ---
 
-## Sprint 1: 类型注解完善
-**Goal**: 修复所有类型注解不一致和缺失问题
-**Demo/Validation**: 
-- 所有现有测试通过: `python -m unittest tests.test_integration -v`
-- 无导入错误: `python -c "from sensor_calibrator import *; from network_config import *"`
+## Sprint 1: 关键 Bug 修复 (P0)
 
-### Task 1.1: 修复 `sensor_calibrator/__init__.py` 返回值类型
-- **Location**: `sensor_calibrator/__init__.py` 第41-76行
-- **Description**: 将 `tuple` 改为 `Tuple[bool, str]`，添加必要的 import
+**Goal**: 修复可能导致运行时错误或数据丢失的关键问题
+**Estimated Time**: 1-2 天
+**Demo/Validation**: 所有现有测试通过，UI 响应正常
+
+### Task 1.1: 修复 Bare except 块
+- **Location**: `StableSensorCalibrator.py`
+- **Line Numbers**: 189, 209, 628, 642, 650, 671, 680, 728, 1836
+- **Description**: 将 `except:` 改为 `except Exception:` 或更具体的异常类型
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - 导入 `from typing import Tuple`
-  - 四个验证函数的返回类型改为 `Tuple[bool, str]`
-- **Validation**: 
-  - 运行测试: `python -m unittest tests.test_integration -v`
-  - 测试通过
-
-### Task 1.2: 修复 `network_config.py` 类型注解
-- **Location**: `network_config.py` 第1-70行
-- **Description**: 为 `extract_network_from_properties` 函数的参数添加完整的类型注解
-- **Dependencies**: Task 1.1（相同类型的导入）
-- **Acceptance Criteria**:
-  - 导入 `from typing import Dict, Any`
-  - 修改参数类型为 `Dict[str, Any]`
+  - 所有 bare except 被替换
+  - 不破坏现有功能
+  - 保留 KeyboardInterrupt/SystemExit 的向上传播
 - **Validation**:
-  - 运行测试确保网络配置相关测试通过
+  - 运行 `ruff check --select=E722` 确认无 bare except
+  - 手动测试相关功能路径
 
----
+**修改示例**:
+```python
+# Before
+except:
+    pass
 
-## Sprint 2: 异常处理与代码结构优化
-**Goal**: 细化异常捕获范围，改进代码组织
-**Demo/Validation**:
-- 异常处理更精确，不会隐藏意外错误
-- 所有测试通过
+# After
+except Exception:
+    pass
 
-### Task 2.1: 优化 `data_pipeline.py` 异常处理
-- **Location**: `data_pipeline.py` 第32-50行
-- **Description**: 将宽泛的 `except Exception` 改为捕获特定异常类型
-- **Dependencies**: 无
-- **Implementation Notes**:
-  - 主异常：`queue.Full`（队列满时）
-  - 日志异常：`AttributeError, TypeError`（logger调用问题）
-  - 保留兜底：在最外层保留 `Exception` 防止意外崩溃，但记录详细错误
-- **Acceptance Criteria**:
-  - 区分队列操作异常和日志异常
-  - 添加注释说明为何保留最外层兜底
-- **Validation**:
-  - 创建简单测试验证队列满时的行为
-  - 所有现有测试通过
+# Better: 具体异常
+except (serial.SerialException, ValueError) as e:
+    self.log_message(f"Error: {e}")
+```
 
-### Task 3.1: 移动 `serial_manager.py` 局部导入
-- **Location**: `serial_manager.py` 第1-10行, 第142行
-- **Description**: 将 `import queue` 从函数内部移到文件顶部
+### Task 1.2: 修复 SerialManager Race Condition
+- **Location**: `serial_manager.py`
+- **Line Numbers**: 149-155
+- **Description**: 调整 `request_response` 中 listener 注册和缓冲区清空的顺序
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - 删除函数内部的 `import queue`
-  - 在文件顶部添加 `import queue`
+  - 先注册 listener，再清空缓冲区，最后发送命令
+  - 确保不会丢失响应数据
 - **Validation**:
-  - 串口功能测试通过
-  - 所有测试通过
+  - 运行串口通信测试
+  - 验证高频率命令/响应场景
 
-### Task 3.2: 优化 `data_buffer.py` 重复检查
-- **Location**: `sensor_calibrator/data_buffer.py` 第78-95行
-- **Description**: 简化 `_enforce_size_limit` 方法中的重复条件检查
-- **Dependencies**: 无
-- **Implementation Notes**:
-  - 当前代码在已检查总长度后，又分别检查每个通道的长度
-  - 由于数据是同步添加的，各通道长度应该一致
-  - 简化后保留一个统一的长度检查
-- **Acceptance Criteria**:
-  - 移除不必要的重复长度检查
-  - 保持线程安全性（锁仍然需要）
-- **Validation**:
-  - 测试缓冲区大小限制功能正常
-  - 多线程测试通过（如果有）
+**修改方案**:
+```python
+# Before
+self.reset_input_buffer()
+self.add_listener(_listener)
+self.send_line(command)
 
----
+# After
+self.add_listener(_listener)
+try:
+    self.reset_input_buffer()
+    self.send_line(command)
+    # ... wait for response
+finally:
+    self.remove_listener(_listener)
+```
 
-## Sprint 3: 性能优化与文档补充
-**Goal**: 性能优化和关键文档完善
-**Demo/Validation**:
-- 正则表达式性能提升（虽然影响较小）
-- 主要类有基本文档
-
-### Task 4.1: 预编译正则表达式
-- **Location**: `activation.py` 第1-41行
-- **Description**: 将 MAC 地址验证的正则表达式预编译为模块级常量
+### Task 1.3: 修复主线程 Sleep 阻塞 UI
+- **Location**: `StableSensorCalibrator.py`
+- **Line Number**: 632
+- **Description**: 使用 `self.root.after()` 替代 `time.sleep()` 实现非阻塞延迟
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - 添加模块级 `_MAC_PATTERN = re.compile(...)`
-  - `validate_mac_address` 使用预编译的正则
-  - `extract_mac_from_properties` 中的正则也使用预编译版本（如有必要）
+  - UI 在清理期间保持响应
+  - 清理延迟仍然有效
 - **Validation**:
-  - 运行激活相关测试
-  - 验证 MAC 地址验证功能正常
+  - 手动测试关闭窗口操作
+  - 确认 UI 不卡顿
 
-### Task 4.2: 为主类添加文档字符串
-- **Location**: `StableSensorCalibrator.py` 第31-60行
-- **Description**: 为主类和 `__init__` 方法添加文档字符串
+**修改方案**:
+```python
+# Before
+time.sleep(Config.SERIAL_CLEANUP_DELAY)
+self.cleanup()
+
+# After
+self.root.after(int(Config.SERIAL_CLEANUP_DELAY * 1000), self._do_cleanup)
+
+# 或重构 cleanup 为异步方式
+def cleanup_async(self, callback=None):
+    def delayed_cleanup():
+        self._actual_cleanup()
+        if callback:
+            callback()
+    self.root.after(int(Config.SERIAL_CLEANUP_DELAY * 1000), delayed_cleanup)
+```
+
+---
+
+## Sprint 2: 封装改进 (P1)
+
+**Goal**: 改进类的封装性，减少耦合
+**Estimated Time**: 1-2 天
+**Demo/Validation**: ActivationWorkflow 接口改进，无直接私有属性访问
+
+### Task 2.1: 重构 ActivationWorkflow 状态管理
+- **Location**: 
+  - `StableSensorCalibrator.py:1261, 1288`
+  - `sensor_calibrator/activation_workflow.py` (如存在)
+- **Description**: 
+  - 为 ActivationWorkflow 添加 `set_mac_address()` 公共方法
+  - 或修改工作流方法接受 MAC 地址参数
+  - 移除直接设置 `_mac_address` 的操作
 - **Dependencies**: 无
 - **Acceptance Criteria**:
-  - `StableSensorCalibrator` 类有模块级文档字符串（描述职责）
-  - `__init__` 方法有文档字符串（描述初始化内容）
-  - 保持简洁，不过度文档化
+  - 无直接访问 `_mac_address` 私有属性
+  - 功能保持不变
 - **Validation**:
-  - 代码可读性提升
-  - 无功能性改变（通过测试验证）
+  - 激活功能测试通过
+  - 代码搜索确认无 `_mac_address` 直接访问
+
+**修改方案 A - 添加 setter 方法**:
+```python
+# ActivationWorkflow 类
+def set_mac_address(self, mac_address: str) -> None:
+    """设置 MAC 地址用于激活验证。"""
+    self._mac_address = mac_address
+
+# StableSensorCalibrator
+self.activation_workflow.set_mac_address(self.mac_address)
+```
+
+**修改方案 B - 方法参数传递** (推荐):
+```python
+# 修改工作流方法签名
+def check_activation(self, mac_address: str) -> bool:
+    """检查激活状态，传入 MAC 地址。"""
+    # 使用传入的 mac_address，不依赖内部状态
+    ...
+
+# 调用方式
+result = self.activation_workflow.check_activation(self.mac_address)
+```
+
+### Task 2.2: 移除 `__del__` 析构函数
+- **Location**: `StableSensorCalibrator.py:2371-2374`
+- **Description**: 
+  - 移除 `__del__` 方法
+  - 确保 `cleanup()` 通过 `atexit` 和 `on_closing` 正确调用
+  - 添加警告日志到 cleanup 如果资源未正确释放
+- **Dependencies**: 无
+- **Acceptance Criteria**:
+  - `__del__` 方法被移除
+  - 资源清理仍正常工作
+- **Validation**:
+  - 正常关闭测试
+  - 异常关闭测试
+
+**修改方案**:
+```python
+# 移除整个 __del__ 方法
+# 已在 __init__ 中注册: atexit.register(self.cleanup)
+
+# 确保 cleanup  robust
+def cleanup(self):
+    """清理资源，可安全多次调用。"""
+    if self.exiting:
+        return
+    self.exiting = True
+    # ... 清理逻辑
+```
 
 ---
 
-## 排除的 Sprint 5（低优先级）
+## Sprint 3: 代码质量改进 (P2)
 
-以下任务在本次范围之外：
-- ~~Task 5.1: 移动测试函数到 tests 目录~~
-- ~~Task 5.2: 标准化导入排序~~
+**Goal**: 改善代码质量和可维护性
+**Estimated Time**: 0.5-1 天
+**Demo/Validation**: 静态检查通过，无循环导入
 
-原因：这些属于代码清理和风格优化，不影响功能正确性，风险收益比低。
+### Task 3.1: 解决循环导入风险
+- **Location**: `network_config.py`
+- **Description**: 
+  - 检查 `sensor_calibrator` 模块的导入关系
+  - 将验证函数移动到共享工具模块或内联
+- **Dependencies**: 无
+- **Acceptance Criteria**:
+  - 无循环导入风险
+  - 功能保持不变
+- **Validation**:
+  - 导入测试通过
+  - `python -c "import network_config"` 成功
+
+**修改方案**:
+```python
+# 选项 1: 在 network_config.py 内内联验证
+from typing import Optional
+
+def _validate_port(port: str) -> Optional[int]:
+    """内部验证函数，避免外部依赖。"""
+    try:
+        p = int(port)
+        return p if 1 <= p <= 65535 else None
+    except ValueError:
+        return None
+
+# 选项 2: 移动验证函数到 utils/validation.py
+from utils.validation import validate_port, validate_password
+```
+
+### Task 3.2: 修复硬编码路径
+- **Location**: `read_docx.py`
+- **Description**: 
+  - 接受命令行参数作为文件路径
+  - 添加参数验证和 usage 提示
+- **Dependencies**: 无
+- **Acceptance Criteria**:
+  - 路径通过 `sys.argv[1]` 传入
+  - 提供友好的错误信息
+- **Validation**:
+  - 测试脚本带参数运行
+  - 测试无参数时的错误提示
+
+**修改方案**:
+```python
+import sys
+from docx import Document
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python read_docx.py <path_to_docx>")
+        print("Example: python read_docx.py 'D:\\公司文件\\文档.docx'")
+        sys.exit(1)
+    
+    doc_path = sys.argv[1]
+    try:
+        doc = Document(doc_path)
+        # ... 处理逻辑
+    except FileNotFoundError:
+        print(f"Error: File not found: {doc_path}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error reading document: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
 
 ---
 
-## Testing Strategy
+## 测试策略
 
-### 每轮验证
-1. **单元测试**: `python -m unittest tests.test_integration -v`
-2. **导入测试**: `python -c "import sensor_calibrator; from calibration import *; from activation import *"`
-3. **功能测试**: 验证主要功能（激活、校准、网络配置）基本导入正常
+### 单元测试
+- 每个修复任务添加对应的单元测试
+- 测试边界条件和异常处理
 
-### Sprint 完成后验证
-- 确保所有 21 个现有测试仍通过
-- 确认无新的导入错误
+### 集成测试
+- 完整的激活流程测试
+- 串口通信压力测试
+- UI 响应性测试
 
----
+### 静态分析
+```bash
+# 检查 bare except
+ruff check --select=E722 .
 
-## 文件修改清单
+# 全面检查
+ruff check .
 
-| Sprint | 文件 | 修改内容 | 风险级别 |
-|--------|------|----------|----------|
-| 1 | `sensor_calibrator/__init__.py` | 添加 Tuple 导入，修改返回值类型 | 低 |
-| 1 | `network_config.py` | 添加 Dict, Any 导入，修改参数类型 | 低 |
-| 2 | `data_pipeline.py` | 细化异常捕获 | 中（需测试） |
-| 2 | `serial_manager.py` | 移动 import queue 位置 | 低 |
-| 2 | `sensor_calibrator/data_buffer.py` | 简化重复检查 | 中（需验证线程安全） |
-| 3 | `activation.py` | 预编译正则表达式 | 低 |
-| 3 | `StableSensorCalibrator.py` | 添加文档字符串 | 极低 |
+# 类型检查
+mypy sensor_calibrator/ stable_sensor_calibrator.py
+```
 
 ---
 
-## Potential Risks & Mitigation
+## 潜在风险 & 解决方案
 
-| 风险 | Sprint | 影响 | 缓解策略 |
+| 风险 | 可能性 | 影响 | 缓解措施 |
 |------|--------|------|----------|
-| 异常细化可能暴露隐藏bug | 2.1 | 中 | 保留最外层兜底，记录详细错误 |
-| data_buffer 简化影响线程安全 | 3.2 | 中 | 确保锁机制不变，仅简化条件检查 |
-| 类型注解语法错误 | 1.x | 低 | 修改后立即运行导入测试 |
+| Bare except 修改引入未捕获异常 | 中 | 高 | 1. 保留通用 Exception 捕获<br>2. 添加详细日志<br>3. 渐进式修改，一次一个 |
+| SerialManager 修改破坏现有逻辑 | 低 | 高 | 1. 充分测试各种时序<br>2. 保留回滚方案<br>3. 代码审查 |
+| UI 异步修改导致竞态 | 中 | 中 | 1. 使用 Tkinter 的 `after`<br>2. 确保原子性操作<br>3. 测试快速开关场景 |
+| ActivationWorkflow API 变更破坏调用 | 低 | 高 | 1. 先添加新方法<br>2. 标记旧方法弃用<br>3. 统一修改调用点 |
 
 ---
 
-## 实施顺序
+## 回滚计划
 
-```
-Sprint 1: 类型注解 → Sprint 2: 异常与结构 → Sprint 3: 性能与文档
-```
-
-每个 Task 独立可提交，便于回滚。
+1. **版本控制**: 每个 Sprint 独立分支
+2. **测试验证**: 每个 Task 完成后运行完整测试套件
+3. **快速回滚**: 如发现问题，立即回滚到上一个稳定提交
+4. **功能开关**: 对于复杂修改，考虑使用功能开关控制新行为
 
 ---
 
-## 等待确认
+## 完成检查清单
 
-**在你明确批准前，我不会修改任何代码。**
-
-请确认：
-1. ✅ 计划范围（选项B：中高优先级，7个Task）
-2. ✅ 实施顺序（Sprint 1 → 2 → 3）
-3. ✅ 是否开始实施 Sprint 1？
+- [ ] Task 1.1: 所有 bare except 被修复
+- [ ] Task 1.2: SerialManager race condition 修复
+- [ ] Task 1.3: 主线程 sleep 改为异步
+- [ ] Task 2.1: 无直接 `_mac_address` 私有属性访问
+- [ ] Task 2.2: `__del__` 方法已移除
+- [ ] Task 3.1: 无循环导入风险
+- [ ] Task 3.2: 硬编码路径已修复
+- [ ] 所有测试通过
+- [ ] 静态检查无警告
+- [ ] 手动测试验证通过

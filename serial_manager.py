@@ -146,11 +146,12 @@ class SerialManager:
         def _listener(line: str) -> None:
             line_queue.put(line)
 
-        # 清空输入缓冲区，避免旧数据干扰
-        self.reset_input_buffer()
-
+        # 先注册监听器，再清空缓冲区并发送指令
+        # 顺序很重要：避免在清空和发送之间丢失响应
         self.add_listener(_listener)
         try:
+            # 清空输入缓冲区，避免旧数据干扰
+            self.reset_input_buffer()
             # 发送指令
             self.send_line(command)
 
