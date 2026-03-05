@@ -5,7 +5,10 @@ from typing import Dict, Optional
 
 # Pre-compiled regex patterns for performance
 _MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$")
-_MAC_EXTRACT_PATTERN = re.compile(r"(?:[^0-9A-Fa-f]|^)([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})(?:[^0-9A-Fa-f]|$)")
+# Use lookbehind/ahead to avoid capturing boundary characters
+_MAC_EXTRACT_PATTERN = re.compile(
+    r"(?<![0-9A-Fa-f])(([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2})(?![0-9A-Fa-f])"
+)
 
 
 def generate_key_from_mac(mac_address: str) -> str:
@@ -64,7 +67,7 @@ def extract_mac_from_properties(sensor_properties: Dict) -> Optional[str]:
     if isinstance(dn_value, str):
         match = _MAC_EXTRACT_PATTERN.search(dn_value)
         if match:
-            return match.group()
+            return match.group(1)
 
     return None
 

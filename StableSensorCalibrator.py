@@ -111,7 +111,7 @@ class StableSensorCalibrator:
             "URL1": "",
             "URL2": "",
             "URL3": "",
-            "URL4": "1883",
+            "URL4": "",
         }
 
         # 文件路径
@@ -1259,13 +1259,13 @@ class StableSensorCalibrator:
         # 同步 MAC 地址到 ActivationWorkflow
         if self.mac_address:
             self.activation_workflow._mac_address = self.mac_address
-            self.log_message(f"[DEBUG] MAC synced: {self.mac_address}")
+            # MAC address synced successfully
         else:
-            self.log_message("[DEBUG] MAC address is None!")
+            pass  # MAC address is None
             
         # 检查传感器属性
         if not self.sensor_properties:
-            self.log_message("[DEBUG] sensor_properties is empty!")
+            pass  # sensor_properties is empty
             return False
             
         # 检查AKY字段
@@ -1273,13 +1273,13 @@ class StableSensorCalibrator:
         if "sys" in self.sensor_properties:
             sys_info = self.sensor_properties["sys"]
             aky = sys_info.get("AKY") or sys_info.get("aky") or sys_info.get("ak_key")
-            self.log_message(f"[DEBUG] AKY from sensor: {aky}")
+            pass  # AKY retrieved from sensor
         else:
-            self.log_message("[DEBUG] No 'sys' section in sensor_properties")
+            pass  # No 'sys' section in sensor_properties
         
         is_activated = self.activation_workflow.check_activation_status(self.sensor_properties)
         self.sensor_activated = is_activated
-        self.log_message(f"[DEBUG] Activation check result: {is_activated}")
+        pass  # Activation check completed
         return is_activated
 
     def activate_sensor(self):
@@ -1289,17 +1289,9 @@ class StableSensorCalibrator:
         self.activation_workflow._generated_key = self.generated_key
         self.activation_workflow.activate_sensor()
 
-    def activate_sensor_thread(self):
-        """在新线程中激活传感器 - 已委托给 ActivationWorkflow"""
-        pass
-
     def verify_activation(self):
         """验证传感器激活状态 - 委托给 ActivationWorkflow"""
         self.activation_workflow.verify_activation(self.sensor_properties)
-
-    def verify_activation_thread(self):
-        """在新线程中验证激活状态 - 已委托给 ActivationWorkflow"""
-        pass
 
     def update_activation_status(self):
         """更新激活状态显示 - 在 Activation 区域显示"""
