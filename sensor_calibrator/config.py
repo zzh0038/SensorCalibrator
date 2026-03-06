@@ -25,6 +25,7 @@ class Config:
     DISPLAY_DATA_POINTS: Final[int] = 200  # Points to display on charts
     STATS_WINDOW_SIZE: Final[int] = 100  # Samples for statistics calculation
     MAX_QUEUE_SIZE: Final[int] = 2000  # Maximum data queue size
+    MAX_GUI_UPDATE_BATCH: Final[int] = 100  # Max packets processed per GUI update cycle
 
     # =========================================================================
     # Timing (seconds)
@@ -61,6 +62,7 @@ class Config:
     # Calibration
     # =========================================================================
     CALIBRATION_SAMPLES: Final[int] = 100  # Samples per calibration position
+    MIN_CALIBRATION_SAMPLE_RATIO: Final[float] = 0.1  # Min ratio of required samples (10%)
     MONITORING_SAMPLES_NEEDED: Final[int] = 300  # Samples for monitoring
     MONITORING_DURATION: Final[int] = 3  # Monitoring duration in seconds
     EXPECTED_FREQUENCY: Final[int] = 100  # Expected data frequency (Hz)

@@ -164,11 +164,13 @@ class CalibrationWorkflow:
                         self._log_message("Timeout: Stopping data collection")
                         break
                         
-                except Exception:
+                except Exception as e:
+                    self._log_message(f"Error collecting calibration data: {e}")
                     time.sleep(Config.QUICK_SLEEP)
                     continue
             
-            if samples_collected >= Config.CALIBRATION_SAMPLES // 10:  # 至少有10%的样本
+            min_required_samples = int(Config.CALIBRATION_SAMPLES * Config.MIN_CALIBRATION_SAMPLE_RATIO)
+            if samples_collected >= min_required_samples:
                 # 计算平均值
                 mpu_accel_avg = np.mean(mpu_accel_samples, axis=0)
                 mpu_gyro_avg = np.mean(mpu_gyro_samples, axis=0)

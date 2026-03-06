@@ -501,5 +501,6 @@ class SerialManager:
             for port in serial.tools.list_ports.comports():
                 ports.append(port.device)
         except Exception:
+            # 串口枚举失败时返回空列表（合理回退）
             pass
         return ports

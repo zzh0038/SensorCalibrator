@@ -701,7 +701,7 @@ class SensorCalibratorApp:
         try:
             self.is_reading = False
             if self.ser and self.ser.is_open:
-                self.send_ss0_start_stream()
+                self.send_ss4_stop_stream()
 
             if self.data_btn:
                 self.data_btn.config(text="Start Data Stream")
@@ -731,7 +731,8 @@ class SensorCalibratorApp:
                 while not self.data_queue.empty():
                     try:
                         self.data_queue.get_nowait()
-                    except Exception:
+                    except Exception as e:
+                        self.log_message(f"Error processing data packet: {e}", "ERROR")
                         break
             except Exception:
                 pass
@@ -786,7 +787,7 @@ class SensorCalibratorApp:
 
             if hasattr(self, "data_queue"):
                 processed_count = 0
-                while not self.data_queue.empty() and processed_count < 100:
+                while not self.data_queue.empty() and processed_count < Config.MAX_GUI_UPDATE_BATCH:
                     try:
                         data_string = self.data_queue.get_nowait()
                         mpu_accel, mpu_gyro, adxl_accel = self.parse_sensor_data(

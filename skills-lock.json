@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "pi-planning-with-files": {
+      "source": "othmanadi/planning-with-files",
+      "sourceType": "github",
+      "computedHash": "c6250e70586c7b61a0ecb795b48889fc379b713baceac85154d79bb72992429e"
+    },
+    "planning-with-files": {
+      "source": "othmanadi/planning-with-files",
+      "sourceType": "github",
+      "computedHash": "57b43d060a15b7e968b7739dddca8fefc2cfe99fb2f44abf95549292a2d6a139"
+    }
+  }
+}

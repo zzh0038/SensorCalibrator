@@ -273,8 +273,8 @@ class AppCallbacks:
                             self.app.root.after(
                                 0, lambda r=response: self.app.log_message(f"Response: {r}")
                             )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.app.log_message(f"Error reading command response: {e}", "DEBUG")
 
             self.app.root.after(
                 0,

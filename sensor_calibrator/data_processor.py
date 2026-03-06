@@ -79,6 +79,8 @@ class DataProcessor:
                 
                 return mpu_accel, mpu_gyro, adxl_accel
         except Exception:
+            # 数据解析失败（格式错误/无效数据），静默返回 None
+            # 这是预期情况，串口数据可能包含噪声或不完整帧
             pass
         
         return None, None, None
