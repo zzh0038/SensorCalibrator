@@ -5,6 +5,7 @@ SensorCalibrator Application Core
 """
 
 import threading
+import json
 import time
 import tkinter as tk
 from tkinter import ttk, scrolledtext, StringVar, messagebox
@@ -965,13 +966,17 @@ class SensorCalibratorApp:
                 self.root.after(0, self.stop_data_stream)
                 time.sleep(1.0)  # 等待数据流停止
             
+            # 清空输入缓冲区
             self.ser.reset_input_buffer()
             time.sleep(0.5)
 
             self.root.after(0, lambda: self.log_message("Sending SS:8 command..."))
-            self.send_ss8_get_properties()
+            # 使用直接写入方式（与桌面版本相同）
+            self.ser.write(b"SS:8\n")
+            self.ser.flush()
+            self.root.after(0, lambda: self.log_message("Sent: SS:8 (Get Sensor Properties)"))
 
-            time.sleep(2.0)
+            time.sleep(2.0)  # 等待设备响应
 
             response_bytes = b""
             start_time = time.time()
@@ -980,14 +985,14 @@ class SensorCalibratorApp:
             self.root.after(0, lambda: self.log_message("Reading response..."))
 
             while time.time() - start_time < timeout:
-                if not self.ser:
-                    break
                 if self.ser.in_waiting > 0:
                     chunk = self.ser.read(self.ser.in_waiting)
                     response_bytes += chunk
 
+                    # 检查是否收到完整的JSON响应
                     response_str = response_bytes.decode("utf-8", errors="ignore")
 
+                    # 查找JSON开始和结束标记
                     json_start = response_str.find("{")
                     json_end = response_str.rfind("}")
 
@@ -995,25 +1000,53 @@ class SensorCalibratorApp:
                         json_str = response_str[json_start : json_end + 1]
 
                         try:
-                            self.sensor_properties = __import__('json').loads(json_str)
+                            # 解析JSON
+                            self.sensor_properties = json.loads(json_str)
+                            # 处理MAC地址和激活状态
                             self.root.after(0, self.extract_and_process_mac)
+                            # 在主线程中显示属性
                             self.root.after(0, self.display_sensor_properties)
+                            # 提取网络配置
                             self.root.after(0, self.extract_network_config)
+                            # 提取并显示报警阈值
                             self.root.after(0, self.extract_and_display_alarm_threshold)
+                            # 显示网络配置摘要
                             self.root.after(0, self.display_network_summary)
+                            # 显示激活信息
                             self.root.after(0, self.display_activation_info)
+                            # 保存属性到文件
                             self.root.after(0, self.auto_save_properties)
+                            
+                            self.root.after(
+                                0,
+                                lambda: self.log_message(
+                                    "Sensor properties received successfully!"
+                                ),
+                            )
+
                             return
 
-                        except Exception:
+                        except json.JSONDecodeError:
+                            # JSON解析失败，继续等待更多数据
                             continue
 
-                time.sleep(0.1)
+                time.sleep(0.1)  # 短暂休眠
 
+            # 超时处理
             self.root.after(
                 0,
                 lambda: self.log_message("Timeout: Failed to receive complete sensor properties")
             )
+            
+            # 显示接收到的部分数据（用于调试）
+            if response_bytes:
+                partial_response = response_bytes.decode("utf-8", errors="ignore")
+                self.root.after(
+                    0,
+                    lambda: self.log_message(
+                        f"Partial response: {partial_response[:500]}..."
+                    ),
+                )
 
         except Exception as e:
             self.root.after(
@@ -1184,6 +1217,249 @@ class SensorCalibratorApp:
         self.serial_manager.stop_reading()
         self.serial_manager.send_ss4_stop_stream()
         self.log_message("Data stream stopped")
+
+    def read_sensor_properties(self):
+        """读取传感器属性"""
+        if not self.ser or not self.ser.is_open:
+            self.log_message("Error: Not connected to serial port!")
+            return
+
+        self.log_message("Starting sensor properties reading process...")
+        threading.Thread(target=self._read_sensor_properties_thread, daemon=True).start()
+
+    def _read_sensor_properties_thread(self):
+        """在新线程中读取传感器属性"""
+        original_reading_state = self.is_reading
+
+        try:
+            if self.is_reading:
+                self.root.after(0, lambda: self.log_message("Stopping data stream..."))
+                self.root.after(0, self.stop_data_stream)
+                time.sleep(1.0)
+
+            self.ser.reset_input_buffer()
+            time.sleep(0.5)
+
+            self.root.after(0, lambda: self.log_message("Sending SS:8 command..."))
+            self.ser.write(b"SS:8\n")
+            self.ser.flush()
+
+            time.sleep(2.0)
+            response_bytes = b""
+            start_time = time.time()
+            timeout = 10.0
+
+            self.root.after(0, lambda: self.log_message("Reading response..."))
+
+            while time.time() - start_time < timeout:
+                if self.ser.in_waiting > 0:
+                    chunk = self.ser.read(self.ser.in_waiting)
+                    response_bytes += chunk
+
+                    response_str = response_bytes.decode("utf-8", errors="ignore")
+                    json_start = response_str.find("{")
+                    json_end = response_str.rfind("}")
+
+                    if json_start != -1 and json_end != -1 and json_end > json_start:
+                        json_str = response_str[json_start:json_end + 1]
+
+                        try:
+                            self.sensor_properties = json.loads(json_str)
+                            self.root.after(0, self._extract_and_process_mac)
+                            self.root.after(0, self._display_sensor_properties)
+                            self.root.after(0, self._extract_network_config)
+                            self.root.after(0, self._display_network_summary)
+                            self.root.after(0, lambda: self.log_message("Sensor properties received successfully!"))
+                            self.root.after(0, self._display_activation_info)
+                            self.root.after(0, self._auto_save_properties)
+                            return
+                        except json.JSONDecodeError:
+                            continue
+
+                time.sleep(0.1)
+
+            self.root.after(0, lambda: self.log_message("Timeout: Failed to receive complete sensor properties"))
+
+        except Exception as e:
+            self.root.after(0, lambda: self.log_message(f"Error reading sensor properties: {str(e)}"))
+
+        finally:
+            if original_reading_state and not self.is_reading:
+                self.root.after(0, self.start_data_stream)
+
+    def _extract_and_process_mac(self):
+        """提取MAC地址并处理激活逻辑"""
+        if not self.sensor_properties:
+            return
+
+        if "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+            mac_keys = ["MAC", "mac", "mac_address", "macAddress", "device_mac"]
+            for key in mac_keys:
+                if key in sys_info:
+                    self.mac_address = sys_info[key]
+                    break
+
+        if self.mac_address:
+            import hashlib
+            cleaned_mac = self.mac_address.replace(":", "").replace("-", "").lower()
+            if len(cleaned_mac) == 12:
+                mac_bytes = bytes.fromhex(cleaned_mac)
+                hash_object = hashlib.sha256(mac_bytes)
+                self.generated_key = hash_object.hexdigest()
+                self.log_message(f"Generated activation key from MAC {self.mac_address}")
+
+            self._check_activation_status()
+
+    def _check_activation_status(self):
+        """检查传感器激活状态"""
+        if not self.sensor_properties or not self.mac_address:
+            return
+
+        aks_value = None
+        if "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+            aks_value = sys_info.get("AKY") or sys_info.get("aky") or sys_info.get("ak_key")
+
+        if not aks_value:
+            return
+
+        if self.generated_key and len(self.generated_key) >= 12:
+            expected_key = self.generated_key[5:12]
+            self.sensor_activated = (aks_value.lower() == expected_key.lower())
+            self.log_message(f"Sensor activation status: {'ACTIVATED' if self.sensor_activated else 'NOT ACTIVATED'}")
+
+    def _display_sensor_properties(self):
+        """显示传感器属性"""
+        if not self.sensor_properties:
+            return
+
+        self.log_message("\n" + "=" * 50)
+        self.log_message("SENSOR PROPERTIES")
+        self.log_message("=" * 50)
+
+        if "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+            for key, value in sys_info.items():
+                self.log_message(f"{key}: {value}")
+
+        self.log_message("=" * 50)
+
+    def _extract_network_config(self):
+        """从传感器属性中提取网络配置"""
+        if not self.sensor_properties:
+            return
+
+        if "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+
+            ssid = sys_info.get("SSID", "")
+            password = sys_info.get("PA", "")
+            if ssid:
+                self.wifi_params = {"ssid": ssid, "password": password}
+                if hasattr(self, 'ssid_var'):
+                    self.ssid_var.set(ssid)
+                if hasattr(self, 'password_var'):
+                    self.password_var.set(password)
+
+            broker = sys_info.get("MBR", "")
+            username = sys_info.get("MUS", "")
+            mqtt_password = sys_info.get("MPW", "")
+            port = sys_info.get("MPT", "1883")
+
+            if broker:
+                self.mqtt_params = {"broker": broker, "username": username, "password": mqtt_password, "port": str(port)}
+                if hasattr(self, 'mqtt_broker_var'):
+                    self.mqtt_broker_var.set(broker)
+                if hasattr(self, 'mqtt_user_var'):
+                    self.mqtt_user_var.set(username)
+                if hasattr(self, 'mqtt_password_var'):
+                    self.mqtt_password_var.set(mqtt_password)
+                if hasattr(self, 'mqtt_port_var'):
+                    self.mqtt_port_var.set(str(port))
+
+        self.root.after(0, self.enable_config_buttons)
+
+    def _display_network_summary(self):
+        """显示网络配置摘要"""
+        if not self.sensor_properties:
+            return
+
+        self.log_message("\n" + "=" * 50)
+        self.log_message("NETWORK CONFIGURATION SUMMARY")
+        self.log_message("=" * 50)
+
+        if "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+            ssid = sys_info.get("SSID", "Not set")
+            self.log_message(f"WiFi SSID: {ssid}")
+            self.log_message(f"WiFi Password: {'*' * 8 if sys_info.get('PA') else 'Not set'}")
+
+            broker = sys_info.get("MBR", "Not set")
+            username = sys_info.get("MUS", "Not set")
+            port = sys_info.get("MPT", "Not set")
+            self.log_message(f"MQTT Broker: {broker}")
+            self.log_message(f"MQTT Username: {username}")
+            self.log_message(f"MQTT Port: {port}")
+            self.log_message(f"MQTT Password: {'*' * 8 if sys_info.get('MPW') else 'Not set'}")
+
+        self.log_message("=" * 50)
+
+    def _display_activation_info(self):
+        """显示激活相关信息"""
+        if not self.sensor_properties:
+            return
+
+        self.log_message("\n" + "=" * 60)
+        self.log_message("ACTIVATION INFORMATION")
+        self.log_message("=" * 60)
+
+        if self.mac_address:
+            self.log_message(f"MAC Address: {self.mac_address}")
+            if self.generated_key:
+                self.log_message(f"Generated Key: {self.generated_key}")
+
+                aks_value = None
+                if "sys" in self.sensor_properties:
+                    sys_info = self.sensor_properties["sys"]
+                    aks_keys = ["AKY", "aky", "ak_key"]
+                    for key in aks_keys:
+                        if key in sys_info:
+                            aks_value = sys_info[key]
+                            break
+
+                if aks_value:
+                    self.log_message(f"Stored AKY: {aks_value}")
+                    self.log_message(f"Activation Status: {'ACTIVATED' if self.sensor_activated else 'NOT ACTIVATED'}")
+                    if not self.sensor_activated:
+                        self.log_message("ACTION REQUIRED: Activate sensor using 'Activate Sensor' button")
+                else:
+                    self.log_message("AKY field: Not found in properties")
+                    self.log_message("ACTION REQUIRED: Activate sensor using 'Activate Sensor' button")
+        else:
+            self.log_message("MAC Address: Not found in properties")
+
+        self.log_message("=" * 60)
+
+    def _auto_save_properties(self):
+        """自动保存属性到文件"""
+        try:
+            from datetime import datetime
+
+            config_data = {
+                "timestamp": datetime.now().isoformat(),
+                "sensor_properties": self.sensor_properties,
+                "mac_address": self.mac_address,
+                "sensor_activated": self.sensor_activated,
+            }
+
+            with open(self.properties_file, "w", encoding="utf-8") as f:
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+
+            self.log_message(f"Sensor properties saved to: {self.properties_file}")
+
+        except Exception as e:
+            self.log_message(f"Error saving sensor properties: {str(e)}")
 
     def enable_config_buttons(self):
         """启用配置按钮"""

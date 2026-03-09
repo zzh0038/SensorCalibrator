@@ -253,10 +253,12 @@ class SerialManager:
             try:
                 if self._ser.in_waiting > 0:
                     # 读取可用数据
-                    data = self._ser.read(self._ser.in_waiting).decode(
+                    bytes_to_read = self._ser.in_waiting
+                    data = self._ser.read(bytes_to_read).decode(
                         "ascii", errors="ignore"
                     )
                     buffer += data
+
                     
                     # 处理完整行
                     lines = buffer.split("\n")
