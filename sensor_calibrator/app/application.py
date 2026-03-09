@@ -8,7 +8,8 @@ import threading
 import json
 import time
 import tkinter as tk
-from tkinter import ttk, scrolledtext, StringVar, messagebox
+from tkinter import ttk, scrolledtext, StringVar, messagebox, filedialog
+from datetime import datetime
 from typing import Optional, Dict
 
 from ..config import Config, UIConfig, CalibrationConfig
@@ -1099,16 +1100,157 @@ class SensorCalibratorApp:
             self.log_message("No sensor properties to display")
             return
 
+        # 创建新窗口显示属性
+        prop_window = tk.Toplevel(self.root)
+        prop_window.title("Sensor Properties")
+        prop_window.geometry("800x600")
+
+        # 创建框架
+        main_frame = ttk.Frame(prop_window, padding="10")
+        main_frame.pack(fill="both", expand=True)
+
+        # 创建树形视图显示属性
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        # 创建滚动条
+        tree_scroll = ttk.Scrollbar(tree_frame)
+        tree_scroll.pack(side="right", fill="y")
+
+        # 创建树形视图
+        self.props_tree = ttk.Treeview(
+            tree_frame,
+            yscrollcommand=tree_scroll.set,
+            columns=("value",),
+            show="tree",
+            height=20,
+        )
+        self.props_tree.pack(side="left", fill="both", expand=True)
+        tree_scroll.config(command=self.props_tree.yview)
+
+        # 配置列
+        self.props_tree.column("#0", width=300, minwidth=200)
+        self.props_tree.column("value", width=400, minwidth=200)
+
+        # 添加数据
+        self.populate_properties_tree(self.sensor_properties, "")
+
+        # 添加按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=10)
+
+        # 保存按钮
+        save_btn = ttk.Button(
+            button_frame,
+            text="Save Properties to File",
+            command=self.save_properties_to_file,
+            width=20,
+        )
+        save_btn.pack(side="left", padx=5)
+
+        # 关闭按钮
+        close_btn = ttk.Button(
+            button_frame, text="Close", command=prop_window.destroy, width=20
+        )
+        close_btn.pack(side="right", padx=5)
+
+        # 在日志中显示关键信息摘要
+        self.display_properties_summary()
+
+    def populate_properties_tree(self, data, parent, prefix=""):
+        """递归填充属性树"""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                node_id = self.props_tree.insert(
+                    parent, "end", text=str(key), values=("",)
+                )
+                if isinstance(value, (dict, list)):
+                    self.populate_properties_tree(
+                        value, node_id, f"{prefix}.{key}" if prefix else key
+                    )
+                else:
+                    self.props_tree.set(node_id, "value", str(value))
+        elif isinstance(data, list):
+            for i, value in enumerate(data):
+                node_id = self.props_tree.insert(
+                    parent, "end", text=f"[{i}]", values=("",)
+                )
+                if isinstance(value, (dict, list)):
+                    self.populate_properties_tree(value, node_id, f"{prefix}[{i}]")
+                else:
+                    self.props_tree.set(node_id, "value", str(value))
+
+    def display_properties_summary(self):
+        """在日志中显示属性摘要"""
+        if not self.sensor_properties or "sys" not in self.sensor_properties:
+            return
+
+        sys_info = self.sensor_properties["sys"]
+
         self.log_message("\n" + "=" * 60)
-        self.log_message("SENSOR PROPERTIES")
+        self.log_message("SENSOR PROPERTIES SUMMARY")
         self.log_message("=" * 60)
 
-        if "sys" in self.sensor_properties:
-            sys_info = self.sensor_properties["sys"]
-            self.log_message(f"Device Name: {sys_info.get('DN', 'N/A')}")
-            self.log_message(f"Device Serial: {sys_info.get('DS', 'N/A')}")
+        # 设备信息
+        self.log_message(f"Device Name: {sys_info.get('DN', 'N/A')}")
+        self.log_message(f"Device Serial: {sys_info.get('DS', 'N/A')}")
+
+        # 网络信息
+        self.log_message(f"SSID: {sys_info.get('SSID', 'N/A')}")
+        self.log_message(f"WiFi Password: {sys_info.get('PA', 'N/A')}")
+
+        # 位置信息
+        self.log_message(
+            f"Location: {sys_info.get('PR', 'N/A')}, {sys_info.get('PO', 'N/A')}, {sys_info.get('CI', 'N/A')}"
+        )
+        self.log_message(
+            f"Coordinates: {sys_info.get('LAT', 'N/A')}, {sys_info.get('LON', 'N/A')}"
+        )
+
+        # 校准参数
+        if "RACKS" in sys_info:
+            self.log_message(f"MPU6050 Accel Scale: {sys_info['RACKS']}")
+        if "RACOF" in sys_info:
+            self.log_message(f"MPU6050 Accel Offset: {sys_info['RACOF']}")
+        if "REACKS" in sys_info:
+            self.log_message(f"ADXL355 Accel Scale: {sys_info['REACKS']}")
+        if "REACOF" in sys_info:
+            self.log_message(f"ADXL355 Accel Offset: {sys_info['REACOF']}")
+        if "VROOF" in sys_info:
+            self.log_message(f"MPU6050 Gyro Offset (VROOF): {sys_info['VROOF']}")
+        if "GROOF" in sys_info:
+            self.log_message(f"Gyro Offset (GROOF): {sys_info['GROOF']}")
+
+        # 服务器信息
+        self.log_message(
+            f"MQTT Broker: {sys_info.get('MBR', 'N/A')}:{sys_info.get('MPT', 'N/A')}"
+        )
+        self.log_message(f"MQTT Username: {sys_info.get('MUS', 'N/A')}")
 
         self.log_message("=" * 60)
+
+    def save_properties_to_file(self):
+        """保存属性到文件"""
+        try:
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".json",
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+                initialfile=f"sensor_properties_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            )
+
+            if filename:
+                save_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "sensor_properties": self.sensor_properties,
+                }
+
+                with open(filename, "w", encoding="utf-8") as f:
+                    json.dump(save_data, f, indent=2, ensure_ascii=False)
+
+                self.log_message(f"Sensor properties saved to: {filename}")
+
+        except Exception as e:
+            self.log_message(f"Error saving properties to file: {str(e)}")
 
     def extract_network_config(self):
         """从传感器属性中提取网络配置"""
