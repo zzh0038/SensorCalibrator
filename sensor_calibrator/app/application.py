@@ -977,16 +977,20 @@ class SensorCalibratorApp:
             time.sleep(0.5)
 
             self.root.after(0, lambda: self.log_message("Sending SS:8 command..."))
-            # 使用直接写入方式（与桌面版本相同）
-            self.ser.write(b"SS:8\n")
+            
+            # 发送命令并检查发送状态
+            cmd = b"SS:8\n"
+            bytes_written = self.ser.write(cmd)
             self.ser.flush()
-            self.root.after(0, lambda: self.log_message("Sent: SS:8 (Get Sensor Properties)"))
-
-            time.sleep(2.0)  # 等待设备响应
-
+            self.root.after(0, lambda: self.log_message(f"Sent: SS:8 ({bytes_written} bytes)"))
+            
+            # 等待设备处理命令
+            time.sleep(0.5)
+            
             response_bytes = b""
             start_time = time.time()
             timeout = 10.0
+            last_debug_time = start_time
 
             self.root.after(0, lambda: self.log_message("Reading response..."))
 
@@ -994,6 +998,12 @@ class SensorCalibratorApp:
                 if self.ser.in_waiting > 0:
                     chunk = self.ser.read(self.ser.in_waiting)
                     response_bytes += chunk
+                    
+                    # 每收到数据就打印调试信息
+                    self.root.after(
+                        0, 
+                        lambda c=chunk: self.log_message(f"Received {len(c)} bytes", "DEBUG")
+                    )
 
                     # 检查是否收到完整的JSON响应
                     response_str = response_bytes.decode("utf-8", errors="ignore")
@@ -1008,6 +1018,10 @@ class SensorCalibratorApp:
                         try:
                             # 解析JSON
                             self.sensor_properties = json.loads(json_str)
+                            self.root.after(
+                                0, 
+                                lambda: self.log_message(f"JSON parsed: {len(json_str)} chars")
+                            )
                             # 处理MAC地址和激活状态
                             self.root.after(0, self.extract_and_process_mac)
                             # 在主线程中显示属性
@@ -1032,11 +1046,24 @@ class SensorCalibratorApp:
 
                             return
 
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
                             # JSON解析失败，继续等待更多数据
+                            self.root.after(
+                                0,
+                                lambda err=str(e): self.log_message(f"JSON parse error: {err[:100]}", "DEBUG")
+                            )
                             continue
+                
+                # 每2秒打印一次调试信息
+                if time.time() - last_debug_time > 2.0:
+                    self.root.after(
+                        0,
+                        lambda waited=f"{time.time() - start_time:.1f}", avail=self.ser.in_waiting: 
+                        self.log_message(f"Waiting... {waited}s, {avail} bytes available", "DEBUG")
+                    )
+                    last_debug_time = time.time()
 
-                time.sleep(0.1)  # 短暂休眠
+                time.sleep(0.05)  # 短暂休眠
 
             # 超时处理
             self.root.after(
@@ -1050,8 +1077,13 @@ class SensorCalibratorApp:
                 self.root.after(
                     0,
                     lambda: self.log_message(
-                        f"Partial response: {partial_response[:500]}..."
+                        f"Partial response ({len(response_bytes)} bytes): {partial_response[:500]}..."
                     ),
+                )
+            else:
+                self.root.after(
+                    0,
+                    lambda: self.log_message("No data received from device")
                 )
 
         except Exception as e:
