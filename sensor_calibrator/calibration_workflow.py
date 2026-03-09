@@ -13,7 +13,19 @@ from typing import Callable, Optional
 
 from .config import Config, CalibrationConfig
 
-# 导入现有的校准算法函数
+# 导入现有的校准算法函数 (使用可选导入，失败时提供明确错误)
+_calibration_functions_available = False
+_import_error_message = None
+
+try:
+    scripts_path = Path(__file__).parent.parent / "scripts"
+    sys.path.insert(0, str(scripts_path))
+    from calibration import compute_six_position_calibration, compute_gyro_offset
+    _calibration_functions_available = True
+except (ImportError, ModuleNotFoundError) as e:
+    _import_error_message = str(e)
+    compute_six_position_calibration = None
+    compute_gyro_offset = None
 scripts_path = Path(__file__).parent.parent / "scripts"
 sys.path.insert(0, str(scripts_path))
 from calibration import compute_six_position_calibration, compute_gyro_offset
@@ -262,6 +274,15 @@ class CalibrationWorkflow:
     def finish_calibration(self) -> None:
         """完成校准并计算参数（线程安全）"""
         self._log_message("Calculating calibration parameters...")
+
+        # 检查校准函数是否可用
+        if not _calibration_functions_available:
+            error_msg = f"Calibration functions not available: {_import_error_message}"
+            self._log_message(f"Error: {error_msg}")
+            self._log_message("Please ensure scripts/calibration.py exists and is properly installed.")
+            if "on_calibration_error" in self.callbacks:
+                self.callbacks["on_calibration_error"]()
+            return
 
         # 在锁内复制数据，然后释放锁进行计算
         with self._state_lock:

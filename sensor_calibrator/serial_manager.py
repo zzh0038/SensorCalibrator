@@ -480,7 +480,7 @@ class SerialManager:
                 self._log_message(f"Sent {config_type} configuration command")
             
             # 等待设备处理
-            time.sleep(Config.CONFIG_COMMAND_DELAY)
+            time.sleep(Config.COMMAND_DELAY)
             return True
             
         except Exception as e:
@@ -528,7 +528,13 @@ class SerialManager:
         try:
             for port in serial.tools.list_ports.comports():
                 ports.append(port.device)
-        except Exception:
+        except Exception as e:
+            # 串口枚举失败时返回空列表（合理回退）
+            # 静默处理，因为这是预期的回退行为
+            # 如需诊断问题，可临时启用调试日志
+            # import logging
+            # logging.debug(f"Serial port enumeration failed: {e}")
+            pass
             # 串口枚举失败时返回空列表（合理回退）
             pass
         return ports
