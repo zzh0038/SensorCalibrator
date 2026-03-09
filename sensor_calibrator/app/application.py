@@ -959,11 +959,12 @@ class SensorCalibratorApp:
         original_reading_state = self.is_reading
 
         try:
+            # 先停止数据流（在主线程中执行，确保线程安全）
             if self.is_reading:
                 self.root.after(0, lambda: self.log_message("Stopping data stream..."))
                 self.root.after(0, self.stop_data_stream)
-                time.sleep(1.0)
-
+                time.sleep(1.0)  # 等待数据流停止
+            
             self.ser.reset_input_buffer()
             time.sleep(0.5)
 

@@ -55,9 +55,9 @@ class AppCallbacks:
             if self.app.data_btn2:
                 self.app.data_btn2.config(state="normal")
             self.app.ser = self.app.serial_manager.serial_port
-        
-        if self.app.read_props_btn:
-            self.app.read_props_btn.config(state="normal")
+            
+            if self.app.read_props_btn:
+                self.app.read_props_btn.config(state="normal")
     
     def disconnect_serial(self):
         """断开串口连接"""
