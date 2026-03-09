@@ -11,6 +11,7 @@ from collections import deque
 import itertools
 import numpy as np
 
+import time
 from .config import Config
 
 
@@ -42,6 +43,11 @@ class SensorDataBuffer:
         # Statistics cache
         self._stats_cache: Dict[str, Any] = {}
         self._stats_valid = False
+        
+        # 时间跟踪（兼容 DataProcessor 接口）
+        self._data_start_time: Optional[float] = None
+        self._packet_count = 0
+        self._expected_frequency = Config.EXPECTED_FREQUENCY
     
     # -------------------------------------------------------------------------
     # Data Addition
@@ -244,3 +250,205 @@ class SensorDataBuffer:
             self._mpu_gyro_data = [deque(ch, maxlen=value) for ch in self._mpu_gyro_data]
             self._adxl_accel_data = [deque(ch, maxlen=value) for ch in self._adxl_accel_data]
             self._gravity_mag_data = deque(self._gravity_mag_data, maxlen=value)
+
+    # -------------------------------------------------------------------------
+    # DataProcessor Compatibility Layer
+    # -------------------------------------------------------------------------
+    
+    @property
+    def data_start_time(self) -> Optional[float]:
+        """获取数据开始时间（兼容 DataProcessor）"""
+        with self._lock:
+            return self._data_start_time
+    
+    @data_start_time.setter
+    def data_start_time(self, value: Optional[float]) -> None:
+        """设置数据开始时间（兼容 DataProcessor）"""
+        with self._lock:
+            self._data_start_time = value
+    
+    @property
+    def packet_count(self) -> int:
+        """获取包计数（兼容 DataProcessor）"""
+        with self._lock:
+            return self._packet_count
+    
+    @packet_count.setter
+    def packet_count(self, value: int) -> None:
+        """设置包计数（兼容 DataProcessor）"""
+        with self._lock:
+            self._packet_count = value
+    
+    @property
+    def expected_frequency(self) -> int:
+        """获取期望频率（兼容 DataProcessor）"""
+        return self._expected_frequency
+    
+    @property
+    def time_data(self) -> Deque[float]:
+        """直接访问时间数据（兼容 DataProcessor，注意：非线程安全直接访问）"""
+        return self._time_data
+    
+    @property
+    def mpu_accel_data(self) -> List[Deque[float]]:
+        """直接访问 MPU 加速度数据（兼容 DataProcessor）"""
+        return self._mpu_accel_data
+    
+    @property
+    def mpu_gyro_data(self) -> List[Deque[float]]:
+        """直接访问 MPU 陀螺仪数据（兼容 DataProcessor）"""
+        return self._mpu_gyro_data
+    
+    @property
+    def adxl_accel_data(self) -> List[Deque[float]]:
+        """直接访问 ADXL 加速度数据（兼容 DataProcessor）"""
+        return self._adxl_accel_data
+    
+    @property
+    def gravity_mag_data(self) -> Deque[float]:
+        """直接访问重力数据（兼容 DataProcessor）"""
+        return self._gravity_mag_data
+    
+    def has_data(self) -> bool:
+        """检查是否有数据（兼容 DataProcessor）"""
+        with self._lock:
+            return len(self._time_data) > 0
+    
+    def get_display_data(self, max_points: Optional[int] = None) -> Dict[str, Any]:
+        """
+        获取用于显示的数据（兼容 DataProcessor）
+        
+        Args:
+            max_points: 最大数据点数，None 表示使用配置值
+            
+        Returns:
+            包含时间序列数据的字典
+        """
+        if max_points is None:
+            max_points = Config.DISPLAY_DATA_POINTS
+        
+        with self._lock:
+            return {
+                'time': list(self._time_data),
+                'mpu_accel': [list(d) for d in self._mpu_accel_data],
+                'adxl_accel': [list(d) for d in self._adxl_accel_data],
+                'mpu_gyro': [list(d) for d in self._mpu_gyro_data],
+                'gravity': list(self._gravity_mag_data),
+            }
+    
+    def update_statistics(self) -> Dict[str, Any]:
+        """
+        更新并返回统计信息（兼容 DataProcessor）
+        
+        Returns:
+            包含所有统计信息的字典
+        """
+        with self._lock:
+            if len(self._time_data) < 10:
+                return self._get_empty_stats()
+            
+            window_size = min(Config.STATS_WINDOW_SIZE, len(self._time_data))
+            start_idx = len(self._time_data) - window_size
+            
+            stats = self._get_empty_stats()
+            
+            # 计算各通道统计
+            for i in range(3):
+                if len(self._mpu_accel_data[i]) >= window_size:
+                    data = list(itertools.islice(self._mpu_accel_data[i], start_idx, None))
+                    stats["mpu_accel_mean"][i] = float(np.mean(data))
+                    stats["mpu_accel_std"][i] = float(np.std(data))
+                
+                if len(self._adxl_accel_data[i]) >= window_size:
+                    data = list(itertools.islice(self._adxl_accel_data[i], start_idx, None))
+                    stats["adxl_accel_mean"][i] = float(np.mean(data))
+                    stats["adxl_accel_std"][i] = float(np.std(data))
+                
+                if len(self._mpu_gyro_data[i]) >= window_size:
+                    data = list(itertools.islice(self._mpu_gyro_data[i], start_idx, None))
+                    stats["mpu_gyro_mean"][i] = float(np.mean(data))
+                    stats["mpu_gyro_std"][i] = float(np.std(data))
+            
+            if len(self._gravity_mag_data) >= window_size:
+                data = list(itertools.islice(self._gravity_mag_data, start_idx, None))
+                stats["gravity_mean"] = float(np.mean(data))
+                stats["gravity_std"] = float(np.std(data))
+            
+            self._stats_cache = stats
+            self._stats_valid = True
+            return stats
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """
+        获取当前统计信息（兼容 DataProcessor）
+        
+        Returns:
+            统计信息字典的副本
+        """
+        with self._lock:
+            if not self._stats_valid:
+                return self._get_empty_stats()
+            return self._stats_cache.copy()
+    
+    def _get_empty_stats(self) -> Dict[str, Any]:
+        """返回空的统计信息结构"""
+        return {
+            "mpu_accel_mean": [0.0, 0.0, 0.0],
+            "mpu_accel_std": [0.0, 0.0, 0.0],
+            "adxl_accel_mean": [0.0, 0.0, 0.0],
+            "adxl_accel_std": [0.0, 0.0, 0.0],
+            "mpu_gyro_mean": [0.0, 0.0, 0.0],
+            "mpu_gyro_std": [0.0, 0.0, 0.0],
+            "gravity_mean": 0.0,
+            "gravity_std": 0.0,
+        }
+    
+    def clear_all(self) -> None:
+        """
+        清空所有数据（兼容 DataProcessor 接口）
+        
+        与 clear() 方法功能相同，提供接口兼容性。
+        """
+        with self._lock:
+            self._time_data.clear()
+            # 重新初始化 deque，保持 maxlen
+            self._mpu_accel_data = [deque(maxlen=self._max_points) for _ in range(3)]
+            self._mpu_gyro_data = [deque(maxlen=self._max_points) for _ in range(3)]
+            self._adxl_accel_data = [deque(maxlen=self._max_points) for _ in range(3)]
+            self._gravity_mag_data.clear()
+            self._stats_cache.clear()
+            self._stats_valid = False
+            self._data_start_time = None
+            self._packet_count = 0
+    
+    @staticmethod
+    def parse_sensor_data(data_string: str) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[List[float]]]:
+        """
+        解析传感器数据字符串（从 DataProcessor 迁移）
+        
+        Args:
+            data_string: 从串口接收的数据字符串，格式为逗号分隔的数字
+        
+        Returns:
+            (mpu_accel, mpu_gyro, adxl_accel) 或 (None, None, None) 如果解析失败
+        """
+        try:
+            parts = data_string.split(",")
+            if len(parts) >= 9:
+                values = []
+                for part in parts[:9]:
+                    try:
+                        values.append(float(part.strip()))
+                    except (ValueError, TypeError):
+                        values.append(0.0)
+                
+                mpu_accel = values[0:3]
+                mpu_gyro = values[3:6]
+                adxl_accel = values[6:9]
+                
+                return mpu_accel, mpu_gyro, adxl_accel
+        except Exception:
+            # 数据解析失败（格式错误/无效数据），静默返回 None
+            pass
+        
+        return None, None, None

@@ -53,6 +53,9 @@ class SerialManager:
         self._packets_received = 0
         self._consecutive_errors = 0
         self._max_consecutive_errors = 5
+        
+        # 写入锁（保证多线程写入串口的线程安全）
+        self._write_lock = threading.Lock()
     
     # ==================== 属性 ====================
     
@@ -402,6 +405,31 @@ class SerialManager:
     def send_ss9_restart_sensor(self, description: str = "Restart Sensor") -> bool:
         """发送 SS:9 指令 - 重启传感器"""
         return self.send_ss_command(9, description)
+    
+    def send_line(self, command: str) -> tuple[bool, str]:
+        """
+        线程安全地发送命令行（自动添加换行符）
+        
+        此方法使用写锁保证多线程环境下串口写入的线程安全。
+        
+        Args:
+            command: 命令字符串（不含换行符）
+            
+        Returns:
+            tuple[bool, str]: (是否成功, 错误信息)
+        """
+        if not self.is_connected:
+            return False, "Not connected to serial port"
+        
+        with self._write_lock:
+            try:
+                self._ser.write(f"{command}\n".encode())
+                self._ser.flush()
+                return True, ""
+            except serial.SerialException as e:
+                return False, f"Serial error: {str(e)}"
+            except Exception as e:
+                return False, f"Unexpected error: {str(e)}"
     
     # ==================== 原始命令发送 ====================
     

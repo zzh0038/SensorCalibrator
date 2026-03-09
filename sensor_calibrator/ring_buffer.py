@@ -7,6 +7,7 @@ Ring Buffer Module - 高性能环形缓冲区
 - 支持批量操作
 """
 
+import queue
 import threading
 from typing import Optional, List, TypeVar, Generic
 
@@ -168,7 +169,7 @@ class QueueAdapter:
         """兼容 Queue.get 接口"""
         item = self._buffer.get()
         if item is None:
-            raise Exception("Queue is empty")  # 模拟 Queue 行为
+            raise queue.Empty  # 正确的 Queue 异常类型
         return item
     
     def get_nowait(self):

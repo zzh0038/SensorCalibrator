@@ -307,10 +307,17 @@ class ActivationWorkflow:
             ser.reset_input_buffer()
             time.sleep(Config.BUFFER_CLEAR_DELAY)
 
-            # 发送激活命令
+            # 发送激活命令（使用线程安全的 send_line 回调）
             activation_cmd = f"SET:AKY,{generated_key[5:12]}"
-            ser.write(activation_cmd.encode())
-            ser.flush()
+            if 'send_line' in self.callbacks:
+                success, error = self.callbacks['send_line'](activation_cmd)
+                if not success:
+                    self._log_message(f"Error sending activation command: {error}")
+                    return
+            else:
+                # 回退：直接写入（不推荐，但为了兼容性保留）
+                ser.write(activation_cmd.encode())
+                ser.flush()
 
             self._log_message(f"Sent activation command: SET:AKY,{generated_key[5:12]}")
             

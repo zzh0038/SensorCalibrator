@@ -11,7 +11,7 @@ from tkinter import ttk, scrolledtext, StringVar, messagebox
 from typing import Optional, Dict
 
 from ..config import Config, UIConfig, CalibrationConfig
-from ..data_processor import DataProcessor
+from ..data_buffer import SensorDataBuffer as DataProcessor
 from ..serial_manager import SerialManager
 from ..network_manager import NetworkManager
 from ..calibration_workflow import CalibrationWorkflow
@@ -493,6 +493,7 @@ class SensorCalibratorApp:
             'start_data_stream': self.start_data_stream,
             'send_ss8_command': self.send_ss8_get_properties,
             'update_activation_status': self.update_activation_status,
+            'send_line': lambda cmd: self.serial_manager.send_line(cmd),
         }
         self.activation_workflow = ActivationWorkflow(callbacks)
 
@@ -927,7 +928,7 @@ class SensorCalibratorApp:
 
     def parse_sensor_data(self, data_string):
         """解析传感器数据"""
-        return self.data_processor.parse_sensor_data(data_string)
+        return DataProcessor.parse_sensor_data(data_string)
 
     def clear_data(self):
         """清空所有数据"""

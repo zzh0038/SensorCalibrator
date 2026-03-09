@@ -1,6 +1,10 @@
 """
 DataProcessor - 管理传感器数据的解析、存储和统计计算
 
+.. deprecated:: 1.0.0
+    此类已弃用，请使用 SensorDataBuffer 代替。
+    SensorDataBuffer 提供了更好的线程安全性和相同的 API。
+    
 职责：
 - 管理数据缓冲区（时间、加速度、陀螺仪、重力）
 - 解析传感器数据字符串
@@ -9,6 +13,7 @@ DataProcessor - 管理传感器数据的解析、存储和统计计算
 """
 
 import time
+import warnings
 from typing import List, Tuple, Optional, Dict, Any
 from collections import deque
 import itertools
@@ -21,11 +26,20 @@ class DataProcessor:
     """
     管理传感器数据的解析、存储和统计计算
     
+    .. deprecated:: 1.0.0
+        此类已弃用，将在未来版本中移除。
+        请使用 SensorDataBuffer 代替。
+    
     使用 deque 实现自动长度限制，避免内存泄漏
     """
     
     def __init__(self):
         """初始化数据处理器"""
+        warnings.warn(
+            "DataProcessor is deprecated. Use SensorDataBuffer instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
         max_points = Config.MAX_DATA_POINTS
         
         # 数据缓冲区

@@ -19,6 +19,10 @@ from .config import (
     GRAVITY_CONSTANT,
 )
 from .data_buffer import SensorDataBuffer
+
+# 默认导出 SensorDataBuffer 作为 DataProcessor 的替代品
+# DataProcessor 已弃用，将在未来版本中移除
+DataProcessor = SensorDataBuffer
 from .ring_buffer import RingBuffer, QueueAdapter
 from .log_throttler import LogThrottler, CountingLogThrottler
 from .chart_manager import ChartManager

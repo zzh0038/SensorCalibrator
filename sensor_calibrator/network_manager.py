@@ -57,7 +57,7 @@ class NetworkManager:
             "URL1": "",
             "URL2": "",
             "URL3": "",
-            "URL4": "1883",
+            "URL4": "",
         }
     
     # ==================== 属性 ====================
@@ -341,9 +341,11 @@ class NetworkManager:
                 self.serial_manager.serial_port.reset_input_buffer()
                 time.sleep(Config.BUFFER_CLEAR_DELAY)
             
-            # 发送配置命令
-            self.serial_manager.serial_port.write(command.encode())
-            self.serial_manager.serial_port.flush()
+            # 发送配置命令（使用线程安全的 send_line）
+            success, error = self.serial_manager.send_line(command)
+            if not success:
+                self._log_message(f"Error sending {config_type} command: {error}")
+                return
             
             self._log_message(f"Sent: {command}")
             
