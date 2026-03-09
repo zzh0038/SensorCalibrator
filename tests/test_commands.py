@@ -188,7 +188,7 @@ class TestActivationKey(unittest.TestCase):
         """Test key verification with correct fragment."""
         mac = "AA:BB:CC:DD:EE:FF"
         full_key = self.workflow.generate_key_from_mac(mac)
-        key_fragment = full_key[5:12]  # 7 characters
+        key_fragment = full_key[:16]  # 16 characters (64-bit key space)
         
         # Should verify successfully
         result = self.workflow.verify_key(key_fragment)
@@ -199,8 +199,8 @@ class TestActivationKey(unittest.TestCase):
         mac = "AA:BB:CC:DD:EE:FF"
         self.workflow.generate_key_from_mac(mac)
         
-        # Wrong fragment
-        result = self.workflow.verify_key("1234567")
+        # Wrong fragment (16 chars)
+        result = self.workflow.verify_key("1234567890abcdef")
         self.assertFalse(result)
 
     def test_verify_key_wrong_length(self):
@@ -209,11 +209,11 @@ class TestActivationKey(unittest.TestCase):
         self.workflow.generate_key_from_mac(mac)
         
         # Too short
-        result = self.workflow.verify_key("123456")
+        result = self.workflow.verify_key("1234567890abcde")
         self.assertFalse(result)
         
         # Too long
-        result = self.workflow.verify_key("12345678")
+        result = self.workflow.verify_key("1234567890abcdefg")
         self.assertFalse(result)
 
 

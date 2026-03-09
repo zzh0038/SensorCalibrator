@@ -64,11 +64,14 @@ class ActivationWorkflow:
         """获取激活状态"""
         return self._is_activated
     
+    # 密钥片段长度配置（16字符 = 64位密钥空间）
+    KEY_FRAGMENT_LENGTH: int = 16
+    
     @property
     def key_fragment(self) -> Optional[str]:
-        """获取密钥片段（用于显示）"""
-        if self._generated_key and len(self._generated_key) >= 12:
-            return self._generated_key[5:12]
+        """获取密钥片段（用于显示）- 16字符（64位密钥空间）"""
+        if self._generated_key and len(self._generated_key) >= self.KEY_FRAGMENT_LENGTH:
+            return self._generated_key[:self.KEY_FRAGMENT_LENGTH]
         return None
     
     # ==================== MAC地址处理 ====================
@@ -166,6 +169,8 @@ class ActivationWorkflow:
         """
         验证输入的密钥是否与基于MAC地址生成的密钥匹配
 
+        使用恒定时间比较防止时序攻击。
+
         Args:
             input_key: 输入的密钥
             mac_address: MAC地址（可选，使用已存储的）
@@ -179,13 +184,16 @@ class ActivationWorkflow:
 
         # 生成预期密钥
         expected_key = self.generate_key_from_mac(mac)
-        expected_fragment = expected_key[5:12]
+        expected_fragment = expected_key[:self.KEY_FRAGMENT_LENGTH]
 
-        # 使用恒定时间比较防止时序攻击
-        if len(input_key) != 7 or len(expected_key) != 64:
+        # 修复：使用 try/except 包裹 compare_digest
+        # 如果长度不匹配会抛出 TypeError，但在时间上是恒定的
+        # 避免在比较前进行长度检查导致的时序泄漏
+        try:
+            return secrets.compare_digest(input_key.lower(), expected_fragment.lower())
+        except TypeError:
+            # 长度不匹配，比较失败
             return False
-
-        return secrets.compare_digest(input_key.lower(), expected_fragment.lower())
     
     def check_activation_status(
         self,
@@ -308,7 +316,8 @@ class ActivationWorkflow:
             time.sleep(Config.BUFFER_CLEAR_DELAY)
 
             # 发送激活命令（使用线程安全的 send_line 回调）
-            activation_cmd = f"SET:AKY,{generated_key[5:12]}"
+            key_fragment = generated_key[:self.KEY_FRAGMENT_LENGTH]
+            activation_cmd = f"SET:AKY,{key_fragment}"
             if 'send_line' in self.callbacks:
                 success, error = self.callbacks['send_line'](activation_cmd)
                 if not success:
@@ -319,7 +328,7 @@ class ActivationWorkflow:
                 ser.write(activation_cmd.encode())
                 ser.flush()
 
-            self._log_message(f"Sent activation command: SET:AKY,{generated_key[5:12]}")
+            self._log_message(f"Sent activation command: SET:AKY,{key_fragment}")
             
             # 等待响应
             time.sleep(2.0)

@@ -144,7 +144,7 @@ class SerialConfig:
 
     TIMEOUT: Final[float] = 0.1
     WRITE_TIMEOUT: Final[float] = 1.0
-    BAUD_RATES: Final[list] = [9600, 19200, 38400, 57600, 115200]
+    BAUD_RATES: Final[list[int]] = [9600, 19200, 38400, 57600, 115200]
     DEFAULT_BAUD: Final[int] = 115200
 
     # Flow control
@@ -197,7 +197,7 @@ class CalibrationConfig:
     TIMEOUT_PER_POSITION: Final[float] = 10.0
 
     # Position names
-    POSITION_NAMES: Final[list] = [
+    POSITION_NAMES: Final[list[str]] = [
         "+X axis down (X = +9.81 m/s²)",
         "-X axis down (X = -9.81 m/s²)",
         "+Y axis down (Y = +9.81 m/s²)",

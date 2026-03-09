@@ -354,6 +354,9 @@ class NetworkManager:
             
             # 读取响应
             response_bytes = b""
+            response_str = ""
+            start_time = time.time()
+            response_bytes = b""
             start_time = time.time()
             timeout = 5.0
             
