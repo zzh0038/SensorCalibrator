@@ -404,6 +404,11 @@ class SensorCalibratorApp:
         self.save_config_btn = self.ui_manager.widgets.get('save_config_btn')
         self.restart_sensor_btn = self.ui_manager.widgets.get('restart_sensor_btn')
         
+        # 激活状态控件
+        self.activation_status_var = self.ui_manager.vars.get('activation_status')
+        self.activation_status_label = self.ui_manager.widgets.get('activation_status_label')
+        self.activate_btn = self.ui_manager.widgets.get('activate_btn')
+        
         # 统计标签变量
         self.stats_labels = {
             'mpu_accel_x_mean': self.ui_manager.vars.get('mpu_accel_x_mean'),
@@ -1091,8 +1096,20 @@ class SensorCalibratorApp:
         """更新激活状态显示"""
         if self.sensor_activated:
             self.log_message("Sensor activation status: ACTIVATED")
+            if self.activation_status_var:
+                self.activation_status_var.set("Activated")
+            if self.activation_status_label:
+                self.activation_status_label.config(foreground="green")
+            if self.activate_btn:
+                self.activate_btn.config(state="disabled")
         else:
             self.log_message("Sensor activation status: NOT ACTIVATED")
+            if self.activation_status_var:
+                self.activation_status_var.set("Not Activated")
+            if self.activation_status_label:
+                self.activation_status_label.config(foreground="red")
+            if self.activate_btn and self.mac_address and self.generated_key:
+                self.activate_btn.config(state="normal")
 
     def display_sensor_properties(self):
         """显示传感器属性"""
