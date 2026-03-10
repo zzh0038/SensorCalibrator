@@ -949,169 +949,6 @@ class SensorCalibratorApp:
         """发送 SS:8 指令 - 获取传感器属性"""
         return self.serial_manager.send_ss8_get_properties()
 
-    def read_sensor_properties(self):
-        """读取传感器属性"""
-        if not self.ser or not self.ser.is_open:
-            self.log_message("Error: Not connected to serial port!")
-            return
-
-        self.log_message("Starting sensor properties reading process...")
-        threading.Thread(target=self._read_properties_thread, daemon=True).start()
-
-    def _read_properties_thread(self):
-        """在新线程中读取传感器属性"""
-        if not self.ser:
-            return
-        
-        original_reading_state = self.is_reading
-
-        try:
-            # 先停止数据流（在主线程中执行，确保线程安全）
-            if self.is_reading:
-                self.root.after(0, lambda: self.log_message("Stopping data stream..."))
-                self.root.after(0, self.stop_data_stream)
-                time.sleep(1.0)  # 等待数据流停止
-            
-            # 清空输入缓冲区
-            self.ser.reset_input_buffer()
-            time.sleep(0.5)
-
-            self.root.after(0, lambda: self.log_message("Sending SS:8 command..."))
-            
-            # 发送命令并检查发送状态
-            cmd = b"SS:8\n"
-            bytes_written = self.ser.write(cmd)
-            self.ser.flush()
-            self.root.after(0, lambda: self.log_message(f"Sent: SS:8 ({bytes_written} bytes)"))
-            
-            # 等待设备处理命令
-            time.sleep(0.5)
-            
-            response_bytes = b""
-            start_time = time.time()
-            timeout = 10.0
-            last_debug_time = start_time
-
-            self.root.after(0, lambda: self.log_message("Reading response..."))
-
-            while time.time() - start_time < timeout:
-                if self.ser.in_waiting > 0:
-                    chunk = self.ser.read(self.ser.in_waiting)
-                    response_bytes += chunk
-                    
-                    # 每收到数据就打印调试信息
-                    self.root.after(
-                        0, 
-                        lambda c=chunk: self.log_message(f"Received {len(c)} bytes", "DEBUG")
-                    )
-
-                    # 检查是否收到完整的JSON响应
-                    response_str = response_bytes.decode("utf-8", errors="ignore")
-
-                    # 查找JSON开始和结束标记
-                    json_start = response_str.find("{")
-                    json_end = response_str.rfind("}")
-
-                    if json_start != -1 and json_end != -1 and json_end > json_start:
-                        json_str = response_str[json_start : json_end + 1]
-
-                        try:
-                            # 解析JSON
-                            self.sensor_properties = json.loads(json_str)
-                            self.root.after(
-                                0, 
-                                lambda: self.log_message(f"JSON parsed: {len(json_str)} chars")
-                            )
-                            # 处理MAC地址和激活状态
-                            self.root.after(0, self.extract_and_process_mac)
-                            # 在主线程中显示属性
-                            self.root.after(0, self.display_sensor_properties)
-                            # 提取网络配置
-                            self.root.after(0, self.extract_network_config)
-                            # 提取并显示报警阈值
-                            self.root.after(0, self.extract_and_display_alarm_threshold)
-                            # 显示网络配置摘要
-                            self.root.after(0, self.display_network_summary)
-                            # 显示激活信息
-                            self.root.after(0, self.display_activation_info)
-                            # 保存属性到文件
-                            self.root.after(0, self.auto_save_properties)
-                            
-                            self.root.after(
-                                0,
-                                lambda: self.log_message(
-                                    "Sensor properties received successfully!"
-                                ),
-                            )
-
-                            return
-
-                        except json.JSONDecodeError as e:
-                            # JSON解析失败，继续等待更多数据
-                            self.root.after(
-                                0,
-                                lambda err=str(e): self.log_message(f"JSON parse error: {err[:100]}", "DEBUG")
-                            )
-                            continue
-                
-                # 每2秒打印一次调试信息
-                if time.time() - last_debug_time > 2.0:
-                    self.root.after(
-                        0,
-                        lambda waited=f"{time.time() - start_time:.1f}", avail=self.ser.in_waiting: 
-                        self.log_message(f"Waiting... {waited}s, {avail} bytes available", "DEBUG")
-                    )
-                    last_debug_time = time.time()
-
-                time.sleep(0.05)  # 短暂休眠
-
-            # 超时处理
-            self.root.after(
-                0,
-                lambda: self.log_message("Timeout: Failed to receive complete sensor properties")
-            )
-            
-            # 显示接收到的部分数据（用于调试）
-            if response_bytes:
-                partial_response = response_bytes.decode("utf-8", errors="ignore")
-                self.root.after(
-                    0,
-                    lambda: self.log_message(
-                        f"Partial response ({len(response_bytes)} bytes): {partial_response[:500]}..."
-                    ),
-                )
-            else:
-                self.root.after(
-                    0,
-                    lambda: self.log_message("No data received from device")
-                )
-
-        except Exception as e:
-            self.root.after(
-                0, lambda: self.log_message(f"Error reading sensor properties: {str(e)}")
-            )
-
-        finally:
-            if original_reading_state and not self.is_reading:
-                self.root.after(0, lambda: self.log_message("Restarting data stream..."))
-                time.sleep(1.0)
-                self.root.after(0, self.start_data_stream)
-
-    def extract_and_process_mac(self):
-        """提取MAC地址并处理激活逻辑"""
-        self.mac_address = self.activation_workflow.extract_mac_from_properties(
-            self.sensor_properties
-        )
-
-        if self.mac_address:
-            self.generated_key = self.activation_workflow.generate_key_from_mac(
-                self.mac_address
-            )
-            self.log_message(f"Generated activation key from MAC {self.mac_address}")
-            
-            self.sensor_activated = self.check_activation_status()
-            self.update_activation_status()
-
     def check_activation_status(self) -> bool:
         """检查传感器激活状态"""
         if not self.sensor_properties:
@@ -1416,6 +1253,7 @@ class SensorCalibratorApp:
             return
 
         self.log_message("Starting sensor properties reading process...")
+        self.log_message(f"Serial port: {self.ser.port}, is_open: {self.ser.is_open}")
         threading.Thread(target=self._read_sensor_properties_thread, daemon=True).start()
 
     def _read_sensor_properties_thread(self):
@@ -1459,23 +1297,36 @@ class SensorCalibratorApp:
                             self.root.after(0, self._extract_and_process_mac)
                             self.root.after(0, self._display_sensor_properties)
                             self.root.after(0, self._extract_network_config)
+                            self.root.after(0, self.extract_and_display_alarm_threshold)
                             self.root.after(0, self._display_network_summary)
                             self.root.after(0, lambda: self.log_message("Sensor properties received successfully!"))
-                            self.root.after(0, self._display_activation_info)
+                            self.root.after(0, self.display_activation_info)
                             self.root.after(0, self._auto_save_properties)
                             return
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            self.root.after(0, lambda e=e: self.log_message(f"JSON parse error: {e}", "DEBUG"))
                             continue
 
                 time.sleep(0.1)
 
             self.root.after(0, lambda: self.log_message("Timeout: Failed to receive complete sensor properties"))
+            
+            # 显示接收到的部分数据（用于调试）
+            if response_bytes:
+                partial_response = response_bytes.decode("utf-8", errors="ignore")
+                self.root.after(
+                    0,
+                    lambda: self.log_message(f"Partial response: {partial_response[:500]}...")
+                )
 
         except Exception as e:
             self.root.after(0, lambda: self.log_message(f"Error reading sensor properties: {str(e)}"))
 
         finally:
+            # 恢复之前的数据流状态
             if original_reading_state and not self.is_reading:
+                self.root.after(0, lambda: self.log_message("Restarting data stream..."))
+                time.sleep(1.0)
                 self.root.after(0, self.start_data_stream)
 
     def _extract_and_process_mac(self):
@@ -1501,6 +1352,7 @@ class SensorCalibratorApp:
                 self.log_message(f"Generated activation key from MAC {self.mac_address}")
 
             self._check_activation_status()
+            self.update_activation_status()
 
     def _check_activation_status(self):
         """检查传感器激活状态"""
