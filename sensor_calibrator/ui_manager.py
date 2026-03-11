@@ -357,7 +357,7 @@ class UIManager:
         
         local_coord_btn = ttk.Button(
             coord_row,
-            text="Local Coord (SS:2)",
+            text="Local Coord",
             command=self.callbacks.get('set_local_coordinate_mode', lambda: None),
             state="disabled",
             width=18,
@@ -367,7 +367,7 @@ class UIManager:
         
         global_coord_btn = ttk.Button(
             coord_row,
-            text="Global Coord (SS:3)",
+            text="Global Coord",
             command=self.callbacks.get('set_global_coordinate_mode', lambda: None),
             state="disabled",
             width=18,
