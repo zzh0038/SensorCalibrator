@@ -1256,6 +1256,47 @@ class SensorCalibratorApp:
         self.log_message(f"Serial port: {self.ser.port}, is_open: {self.ser.is_open}")
         threading.Thread(target=self._read_sensor_properties_thread, daemon=True).start()
 
+    def _parse_keyvalue_response(self, response_str: str):
+        """解析key: value格式的响应"""
+        import re
+        
+        try:
+            props = {"sys": {}}
+            lines = response_str.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line or ':' not in line:
+                    continue
+                
+                # 分割key和value
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    key = parts[0].strip()
+                    value = parts[1].strip()
+                    
+                    # 尝试转换value为适当类型
+                    if value.lower() == 'true':
+                        value = True
+                    elif value.lower() == 'false':
+                        value = False
+                    elif value.isdigit():
+                        value = int(value)
+                    elif value.replace('.', '', 1).isdigit():
+                        value = float(value)
+                    
+                    props["sys"][key] = value
+            
+            if props["sys"]:
+                self.log_message(f"Parsed {len(props['sys'])} properties from key-value format")
+                return props
+            
+            return None
+        
+        except Exception as e:
+            self.log_message(f"Error parsing key-value response: {e}", "WARNING")
+            return None
+
     def _read_sensor_properties_thread(self):
         """在新线程中读取传感器属性"""
         original_reading_state = self.is_reading
@@ -1304,8 +1345,23 @@ class SensorCalibratorApp:
                             self.root.after(0, self._auto_save_properties)
                             return
                         except json.JSONDecodeError as e:
-                            self.root.after(0, lambda e=e: self.log_message(f"JSON parse error: {e}", "DEBUG"))
+                            self.root.after(0, lambda e=e: self.log_message(f"JSON parse error: {e}", "WARNING"))
+                            self.root.after(0, lambda: self.log_message(f"Trying to parse: {json_str[:200]}...", "WARNING"))
                             continue
+                    else:
+                        # JSON格式解析失败，尝试解析为key: value格式
+                        parsed_props = self._parse_keyvalue_response(response_str)
+                        if parsed_props:
+                            self.sensor_properties = parsed_props
+                            self.root.after(0, self._extract_and_process_mac)
+                            self.root.after(0, self._display_sensor_properties)
+                            self.root.after(0, self._extract_network_config)
+                            self.root.after(0, self.extract_and_display_alarm_threshold)
+                            self.root.after(0, self._display_network_summary)
+                            self.root.after(0, lambda: self.log_message("Sensor properties received successfully! (key-value format)"))
+                            self.root.after(0, self.display_activation_info)
+                            self.root.after(0, self._auto_save_properties)
+                            return
 
                 time.sleep(0.1)
 

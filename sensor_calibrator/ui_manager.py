@@ -326,8 +326,7 @@ class UIManager:
         row2.pack(fill="x", pady=1)
         
         read_btn = ttk.Button(
-            row2,
-            text="Read Props",
+            text="Read User Info",
             command=self.callbacks.get('read_properties', lambda: None),
             state="disabled",
             width=15,
