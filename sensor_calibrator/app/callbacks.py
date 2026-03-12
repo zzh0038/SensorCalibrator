@@ -58,6 +58,8 @@ class AppCallbacks:
             
             if self.app.read_props_btn:
                 self.app.read_props_btn.config(state="normal")
+            if self.app.read_device_btn:
+                self.app.read_device_btn.config(state="normal")
     
     def disconnect_serial(self):
         """断开串口连接"""
@@ -74,6 +76,8 @@ class AppCallbacks:
             self.app.data_btn2.config(state="disabled")
         if self.app.read_props_btn:
             self.app.read_props_btn.config(state="disabled")
+        if self.app.read_device_btn:
+            self.app.read_device_btn.config(state="disabled")
         if self.app.resend_btn:
             self.app.resend_btn.config(state="disabled")
         if self.app.local_coord_btn:
@@ -369,6 +373,8 @@ class AppCallbacks:
                     self.app.save_btn.config(state="normal")
                 if self.app.read_props_btn:
                     self.app.read_props_btn.config(state="normal")
+                if self.app.read_device_btn:
+                    self.app.read_device_btn.config(state="normal")
 
         except Exception as e:
             self.app.log_message(f"Error loading calibration parameters: {str(e)}")
@@ -386,6 +392,10 @@ class AppCallbacks:
     def read_sensor_properties(self):
         """读取传感器属性"""
         self.app.read_sensor_properties()
+    
+    def read_device_info(self):
+        """读取设备信息（如MAC、序列号、固件版本等）"""
+        self.app.read_device_info()
     
     # ==================== 坐标模式相关回调 ====================
     
@@ -413,6 +423,14 @@ class AppCallbacks:
     def verify_activation(self):
         """验证传感器激活状态"""
         self.app.activation_workflow.verify_activation(self.app.sensor_properties)
+    
+    def read_calibration_params(self):
+        """读取校准参数（独立命令）"""
+        self.app.read_calibration_params()
+    
+    def verify_activation_status(self):
+        """验证激活状态（独立命令）"""
+        self.app.verify_activation_status()
     
     def copy_activation_key(self):
         """复制激活密钥片段到剪贴板"""

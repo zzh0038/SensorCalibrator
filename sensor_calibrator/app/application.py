@@ -130,6 +130,7 @@ class SensorCalibratorApp:
         self.send_btn = None
         self.save_btn = None
         self.read_props_btn = None
+        self.read_device_btn = None
         self.resend_btn = None
         self.stats_labels: Dict[str, Optional[StringVar]] = {}
         
@@ -302,6 +303,7 @@ class SensorCalibratorApp:
             'send_all_commands': self.ui_callbacks.send_all_commands,
             'save_calibration_parameters': self.ui_callbacks.save_calibration_parameters,
             'read_properties': self.ui_callbacks.read_sensor_properties,
+            'read_device_info': self.ui_callbacks.read_device_info,
             'resend_all_commands': self.ui_callbacks.resend_all_commands,
             
             # 坐标模式
@@ -311,7 +313,11 @@ class SensorCalibratorApp:
             # 激活相关
             'activate_sensor': self.ui_callbacks.activate_sensor,
             'verify_activation': self.ui_callbacks.verify_activation,
+            'verify_activation_status': self.ui_callbacks.verify_activation_status,
             'copy_activation_key': self.ui_callbacks.copy_activation_key,
+            
+            # 校准参数读取（从 SS:8 中剥离的独立功能）
+            'read_calibration_params': self.ui_callbacks.read_calibration_params,
             
             # 网络配置
             'set_wifi_config': self.ui_callbacks.set_wifi_config,
@@ -385,6 +391,7 @@ class SensorCalibratorApp:
         self.send_btn = self.ui_manager.widgets.get('send_btn')
         self.save_btn = self.ui_manager.widgets.get('save_btn')
         self.read_props_btn = self.ui_manager.widgets.get('read_props_btn')
+        self.read_device_btn = self.ui_manager.widgets.get('read_device_btn')
         self.resend_btn = self.ui_manager.widgets.get('resend_btn')
         
         # 坐标模式控件
@@ -1297,6 +1304,223 @@ class SensorCalibratorApp:
             self.log_message(f"Error parsing key-value response: {e}", "WARNING")
             return None
 
+    def read_device_info(self):
+        """
+        读取校准参数（RACKS, RACOF, GROOF 等）
+        通过 SS:13 命令获取
+        """
+        if not self.serial_manager.is_connected:
+            self.log_message("Error: Not connected to serial port!")
+            return
+
+        self.log_message("Starting device info reading process...")
+        threading.Thread(target=self._read_device_info_thread, daemon=True).start()
+
+    def _read_device_info_thread(self):
+        """在线程中读取校准参数"""
+        original_reading_state = self.is_reading
+
+        try:
+            if self.is_reading:
+                self.root.after(0, lambda: self.log_message("Stopping data stream..."))
+                self.root.after(0, self.stop_data_stream)
+                time.sleep(1.0)
+
+            if self.serial_manager.serial_port:
+                self.serial_manager.serial_port.reset_input_buffer()
+            time.sleep(0.5)
+
+            self.root.after(0, lambda: self.log_message("Sending SS:13 command for calibration params..."))
+            self.serial_manager.serial_port.write(b"SS:13\n")
+            self.serial_manager.serial_port.flush()
+
+            time.sleep(1.0)
+            response_bytes = b""
+            start_time = time.time()
+            timeout = 15.0
+            json_found = False
+
+            first_data_logged = False
+            while time.time() - start_time < timeout:
+                if self.serial_manager.serial_port.in_waiting > 0:
+                    chunk = self.serial_manager.serial_port.read(self.serial_manager.serial_port.in_waiting)
+                    response_bytes += chunk
+
+                    response_str = response_bytes.decode("utf-8", errors="ignore")
+                    json_start = response_str.find("{")
+                    json_end = response_str.rfind("}")
+
+                    if not first_data_logged:
+                        first_data_logged = True
+                        self.root.after(0, lambda l=len(response_bytes), s=response_str[:300]: 
+                            self.log_message(f"First chunk: {l} bytes, preview: {s}..."))
+                        # 调试：显示 json_start 位置
+                        self.root.after(0, lambda js=json_start: self.log_message(f"JSON '{{' found at position: {js}"))
+
+                    if json_start != -1 and not json_found:
+                        json_found = True
+                        self.root.after(0, lambda js=json_start, je=json_end: self.log_message(f"JSON data started at {js}, current end at {je}"))
+
+                    if json_start != -1 and json_end != -1 and json_end > json_start:
+                        json_str = response_str[json_start:json_end + 1]
+
+                        try:
+                            device_info = json.loads(json_str)
+                            self.root.after(0, lambda l=len(json_str): self.log_message(f"Complete JSON received: {l} bytes"))
+                            # 使用默认参数正确捕获 device_info 的值
+                            self.root.after(0, lambda d=device_info: self._display_device_info(d))
+                            return
+                        except json.JSONDecodeError as e:
+                            self.root.after(0, lambda js=json_start, je=json_end, l=len(response_bytes), err=str(e): 
+                                self.log_message(f"JSON parse error: {err}, start={js}, end={je}, total={l} bytes, waiting..."))
+                            continue
+
+                time.sleep(0.1)
+
+            # 超时后显示实际接收到的内容，帮助调试
+            final_str = response_bytes.decode("utf-8", errors="ignore")
+            self.root.after(0, lambda l=len(response_bytes): self.log_message(f"TIMEOUT: Received {l} bytes total"))
+            self.root.after(0, lambda s=final_str[:500]: self.log_message(f"Final content preview: {s}..."))
+            self.root.after(0, lambda: self.log_message("Hint: SS:13 may not return JSON format. Check actual response above."))
+
+        except Exception as e:
+            self.root.after(0, lambda: self.log_message(f"Error reading calibration params: {str(e)}"))
+
+        finally:
+            if original_reading_state and not self.is_reading:
+                self.root.after(0, lambda: self.log_message("Restarting data stream..."))
+                time.sleep(1.0)
+                self.root.after(0, self.start_data_stream)
+
+    def _display_device_info(self, device_info):
+        """显示校准参数（SS:13 返回的是校准参数）"""
+        self.log_message(f"_display_device_info called with data: {type(device_info)}")
+        
+        if not device_info:
+            self.log_message("No device info to display (device_info is None or empty)")
+            return
+        
+        if "sys" not in device_info:
+            self.log_message(f"No 'sys' field in device_info. Keys: {list(device_info.keys())}")
+            return
+
+        sys_info = device_info["sys"]
+        self.log_message(f"sys_info contains {len(sys_info)} fields: {list(sys_info.keys())}")
+
+        # 校准参数字段（SS:13 实际返回的字段）
+        calibration_fields = {
+            "RACKS": "MPU6050 Accel Scale",
+            "RACOF": "MPU6050 Accel Offset",
+            "GROOF": "Gyro Offset",
+            "VROOF": "MPU6050 Gyro Offset",
+            "REACKS": "ADXL355 Accel Scale",
+            "REACOF": "ADXL355 Accel Offset",
+            "EROOF": "E-Compass Offset",
+            "VKS": "VKS Parameter",
+            "MAGOF": "Magnetometer Offset",
+            "TEM": "Temperature",
+            "AKY": "Activation Key",
+        }
+
+        self.log_message("\n" + "=" * 50)
+        self.log_message("CALIBRATION PARAMETERS")
+        self.log_message("=" * 50)
+
+        found_count = 0
+        for key, label in calibration_fields.items():
+            if key in sys_info:
+                value = sys_info[key]
+                # 数组类型的值格式化显示
+                if isinstance(value, list):
+                    value_str = f"[{', '.join(str(v) for v in value)}]"
+                else:
+                    value_str = str(value)
+                self.log_message(f"{label}: {value_str}")
+                found_count += 1
+
+        if found_count == 0:
+            self.log_message("No calibration parameters found in response")
+            self.log_message(f"Available fields: {list(sys_info.keys())}")
+
+        self.log_message("=" * 50)
+
+        # 创建弹窗显示校准参数
+        self._show_device_info_dialog(sys_info, calibration_fields)
+
+    def _show_device_info_dialog(self, sys_info, calibration_fields):
+        """创建弹窗显示校准参数"""
+        import tkinter as tk
+        from tkinter import ttk
+
+        info_window = tk.Toplevel(self.root)
+        info_window.title("Calibration Parameters")
+        info_window.geometry("550x500")
+        info_window.transient(self.root)
+        info_window.grab_set()
+
+        main_frame = ttk.Frame(info_window, padding="10")
+        main_frame.pack(fill="both", expand=True)
+
+        # 标题
+        title_label = ttk.Label(main_frame, text="Calibration Parameters", font=("Arial", 14, "bold"))
+        title_label.pack(pady=(0, 10))
+
+        # 创建树形视图
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        tree_scroll = ttk.Scrollbar(tree_frame)
+        tree_scroll.pack(side="right", fill="y")
+
+        info_tree = ttk.Treeview(
+            tree_frame,
+            yscrollcommand=tree_scroll.set,
+            columns=("value",),
+            show="tree headings",
+            height=18,
+        )
+        info_tree.pack(side="left", fill="both", expand=True)
+        tree_scroll.config(command=info_tree.yview)
+
+        info_tree.heading("#0", text="Parameter")
+        info_tree.heading("value", text="Value")
+        info_tree.column("#0", width=220, minwidth=180)
+        info_tree.column("value", width=280, minwidth=200)
+
+        # 填充数据
+        inserted_count = 0
+        for key, label in calibration_fields.items():
+            if key in sys_info:
+                value = sys_info[key]
+                # 数组类型的值格式化显示
+                if isinstance(value, list):
+                    value_str = f"[{', '.join(str(v) for v in value)}]"
+                else:
+                    value_str = str(value)
+                info_tree.insert("", "end", text=label, values=(value_str,))
+                inserted_count += 1
+                self.log_message(f"  Added to dialog: {label} = {value_str}")
+        
+        if inserted_count == 0:
+            self.log_message("Warning: No calibration fields matched the received data")
+            # 显示所有可用的字段
+            info_tree.insert("", "end", text="[Error]", values=("No matching fields found",))
+            for key, value in sys_info.items():
+                info_tree.insert("", "end", text=key, values=(str(value)[:50],))
+            self.log_message(f"Available fields in sys_info: {list(sys_info.keys())}")
+
+        # 关闭按钮
+        close_btn = ttk.Button(main_frame, text="Close", command=info_window.destroy, width=15)
+        close_btn.pack(pady=10)
+
+        # 居中窗口
+        info_window.update_idletasks()
+        width = info_window.winfo_width()
+        height = info_window.winfo_height()
+        x = (info_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (info_window.winfo_screenheight() // 2) - (height // 2)
+        info_window.geometry(f"{width}x{height}+{x}+{y}")
+
     def _read_sensor_properties_thread(self):
         """在新线程中读取传感器属性"""
         original_reading_state = self.is_reading
@@ -1314,13 +1538,13 @@ class SensorCalibratorApp:
             self.ser.write(b"SS:8\n")
             self.ser.flush()
 
-            time.sleep(2.0)
+            time.sleep(1.0)
             response_bytes = b""
             start_time = time.time()
-            timeout = 10.0
+            timeout = 15.0
+            json_found = False
 
-            self.root.after(0, lambda: self.log_message("Reading response..."))
-
+            first_data_logged = False
             while time.time() - start_time < timeout:
                 if self.ser.in_waiting > 0:
                     chunk = self.ser.read(self.ser.in_waiting)
@@ -1330,50 +1554,63 @@ class SensorCalibratorApp:
                     json_start = response_str.find("{")
                     json_end = response_str.rfind("}")
 
+                    # 调试：首次收到数据时打印长度和内容预览
+                    if not first_data_logged:
+                        first_data_logged = True
+                        self.root.after(0, lambda l=len(response_bytes), s=response_str[:300]: 
+                            self.log_message(f"First chunk: {l} bytes, preview: {s}..."))
+
+                    # 找到 JSON 开始标记后，打印接收进度
+                    if json_start != -1 and not json_found:
+                        json_found = True
+                        self.root.after(0, lambda: self.log_message(f"JSON data started, receiving..."))
+
                     if json_start != -1 and json_end != -1 and json_end > json_start:
                         json_str = response_str[json_start:json_end + 1]
 
                         try:
                             self.sensor_properties = json.loads(json_str)
-                            self.root.after(0, self._extract_and_process_mac)
+                            self.root.after(0, lambda l=len(json_str): self.log_message(f"Complete JSON received: {l} bytes"))
+                            self.root.after(0, self._extract_mac_only)
                             self.root.after(0, self._display_sensor_properties)
                             self.root.after(0, self._extract_network_config)
                             self.root.after(0, self.extract_and_display_alarm_threshold)
                             self.root.after(0, self._display_network_summary)
                             self.root.after(0, lambda: self.log_message("Sensor properties received successfully!"))
-                            self.root.after(0, self.display_activation_info)
                             self.root.after(0, self._auto_save_properties)
                             return
                         except json.JSONDecodeError as e:
-                            self.root.after(0, lambda e=e: self.log_message(f"JSON parse error: {e}", "WARNING"))
-                            self.root.after(0, lambda: self.log_message(f"Trying to parse: {json_str[:200]}...", "WARNING"))
+                            # JSON 不完整，继续等待更多数据
+                            self.root.after(0, lambda l=len(response_bytes): self.log_message(f"JSON incomplete, received {l} bytes so far, waiting..."))
                             continue
-                    else:
-                        # JSON格式解析失败，尝试解析为key: value格式
-                        parsed_props = self._parse_keyvalue_response(response_str)
-                        if parsed_props:
-                            self.sensor_properties = parsed_props
-                            self.root.after(0, self._extract_and_process_mac)
-                            self.root.after(0, self._display_sensor_properties)
-                            self.root.after(0, self._extract_network_config)
-                            self.root.after(0, self.extract_and_display_alarm_threshold)
-                            self.root.after(0, self._display_network_summary)
-                            self.root.after(0, lambda: self.log_message("Sensor properties received successfully! (key-value format)"))
-                            self.root.after(0, self.display_activation_info)
-                            self.root.after(0, self._auto_save_properties)
-                            return
 
+                # 如果没有数据到达，短暂休眠后继续检查
                 time.sleep(0.1)
+                
+                # 每 3 秒报告一次接收进度
+                elapsed = time.time() - start_time
+                if int(elapsed) % 3 == 0 and response_bytes and json_found:
+                    total_len = len(response_bytes)
+                    self.root.after(0, lambda l=total_len, t=int(elapsed): self.log_message(f"Receiving... {l} bytes in {t}s", "DEBUG"))
 
             self.root.after(0, lambda: self.log_message("Timeout: Failed to receive complete sensor properties"))
             
-            # 显示接收到的部分数据（用于调试）
+            # 超时后尝试 key-value 解析作为最后的备选方案
             if response_bytes:
                 partial_response = response_bytes.decode("utf-8", errors="ignore")
-                self.root.after(
-                    0,
-                    lambda: self.log_message(f"Partial response: {partial_response[:500]}...")
-                )
+                # 尝试 key-value 解析
+                parsed_props = self._parse_keyvalue_response(partial_response)
+                if parsed_props:
+                    self.root.after(0, lambda: self.log_message(f"Parsed {len(parsed_props.get('sys', {}))} properties via fallback"))
+                    self.sensor_properties = parsed_props
+                    self.root.after(0, self._extract_mac_only)
+                    self.root.after(0, self._display_sensor_properties)
+                    self.root.after(0, self._extract_network_config)
+                    self.root.after(0, self.extract_and_display_alarm_threshold)
+                    self.root.after(0, self._display_network_summary)
+                    self.root.after(0, lambda: self.log_message("Sensor properties received (fallback mode)!"))
+                    self.root.after(0, self._auto_save_properties)
+                    return
 
         except Exception as e:
             self.root.after(0, lambda: self.log_message(f"Error reading sensor properties: {str(e)}"))
@@ -1385,8 +1622,31 @@ class SensorCalibratorApp:
                 time.sleep(1.0)
                 self.root.after(0, self.start_data_stream)
 
+    def _extract_mac_only(self):
+        """仅从传感器属性中提取MAC地址并生成密钥（不处理激活状态）"""
+        if not self.sensor_properties:
+            return
+
+        if "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+            mac_keys = ["MAC", "mac", "mac_address", "macAddress", "device_mac"]
+            for key in mac_keys:
+                if key in sys_info:
+                    self.mac_address = sys_info[key]
+                    break
+
+        if self.mac_address:
+            import hashlib
+            cleaned_mac = self.mac_address.replace(":", "").replace("-", "").lower()
+            if len(cleaned_mac) == 12:
+                mac_bytes = bytes.fromhex(cleaned_mac)
+                hash_object = hashlib.sha256(mac_bytes)
+                self.generated_key = hash_object.hexdigest()
+                self.log_message(f"Generated activation key from MAC {self.mac_address}")
+            # 注意：激活状态检查已移除此方法，请使用 verify_activation_status() 单独验证
+
     def _extract_and_process_mac(self):
-        """提取MAC地址并处理激活逻辑"""
+        """提取MAC地址并处理激活逻辑（用于独立的激活验证流程）"""
         if not self.sensor_properties:
             return
 
@@ -1429,10 +1689,11 @@ class SensorCalibratorApp:
             self.log_message(f"Sensor activation status: {'ACTIVATED' if self.sensor_activated else 'NOT ACTIVATED'}")
 
     def _display_sensor_properties(self):
-        """显示传感器属性"""
+        """显示传感器属性 - 在日志和弹窗中显示"""
         if not self.sensor_properties:
             return
 
+        # 1. 在日志中显示属性
         self.log_message("\n" + "=" * 50)
         self.log_message("SENSOR PROPERTIES")
         self.log_message("=" * 50)
@@ -1443,6 +1704,103 @@ class SensorCalibratorApp:
                 self.log_message(f"{key}: {value}")
 
         self.log_message("=" * 50)
+
+        # 2. 创建弹窗显示属性树
+        self._show_properties_dialog()
+
+    def _show_properties_dialog(self):
+        """创建弹窗显示传感器属性树"""
+        import tkinter as tk
+        from tkinter import ttk
+
+        prop_window = tk.Toplevel(self.root)
+        prop_window.title("Sensor Properties")
+        prop_window.geometry("800x600")
+        prop_window.transient(self.root)  # 设置为模态窗口的父窗口
+        prop_window.grab_set()  # 模态窗口
+
+        # 创建主框架
+        main_frame = ttk.Frame(prop_window, padding="10")
+        main_frame.pack(fill="both", expand=True)
+
+        # 创建树形视图显示属性
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill="both", expand=True, pady=(0, 10))
+
+        # 创建滚动条
+        tree_scroll_y = ttk.Scrollbar(tree_frame)
+        tree_scroll_y.pack(side="right", fill="y")
+        tree_scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal")
+        tree_scroll_x.pack(side="bottom", fill="x")
+
+        # 创建树形视图
+        props_tree = ttk.Treeview(
+            tree_frame,
+            yscrollcommand=tree_scroll_y.set,
+            xscrollcommand=tree_scroll_x.set,
+            columns=("value",),
+            show="tree headings",
+            height=20,
+        )
+        props_tree.pack(side="left", fill="both", expand=True)
+        tree_scroll_y.config(command=props_tree.yview)
+        tree_scroll_x.config(command=props_tree.xview)
+
+        # 配置列
+        props_tree.heading("#0", text="Property")
+        props_tree.heading("value", text="Value")
+        props_tree.column("#0", width=250, minwidth=150)
+        props_tree.column("value", width=450, minwidth=200)
+
+        # 填充数据
+        self._populate_properties_tree(props_tree, self.sensor_properties, "")
+
+        # 添加按钮框架
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=10)
+
+        # 保存按钮
+        save_btn = ttk.Button(
+            button_frame,
+            text="Save to File",
+            command=lambda: [self.save_properties_to_file(), prop_window.destroy()],
+            width=15,
+        )
+        save_btn.pack(side="left", padx=5)
+
+        # 关闭按钮
+        close_btn = ttk.Button(
+            button_frame,
+            text="Close",
+            command=prop_window.destroy,
+            width=15,
+        )
+        close_btn.pack(side="right", padx=5)
+
+        # 居中窗口
+        prop_window.update_idletasks()
+        width = prop_window.winfo_width()
+        height = prop_window.winfo_height()
+        x = (prop_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (prop_window.winfo_screenheight() // 2) - (height // 2)
+        prop_window.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _populate_properties_tree(self, tree, data, parent):
+        """递归填充属性树"""
+        if isinstance(data, dict):
+            for key, value in data.items():
+                node_id = tree.insert(parent, "end", text=str(key), values=("",))
+                if isinstance(value, (dict, list)):
+                    self._populate_properties_tree(tree, value, node_id)
+                else:
+                    tree.set(node_id, "value", str(value))
+        elif isinstance(data, list):
+            for i, value in enumerate(data):
+                node_id = tree.insert(parent, "end", text=f"[{i}]", values=("",))
+                if isinstance(value, (dict, list)):
+                    self._populate_properties_tree(tree, value, node_id)
+                else:
+                    tree.set(node_id, "value", str(value))
 
     def _extract_network_config(self):
         """从传感器属性中提取网络配置"""
@@ -1539,6 +1897,111 @@ class SensorCalibratorApp:
             self.log_message("MAC Address: Not found in properties")
 
         self.log_message("=" * 60)
+
+    def read_calibration_params(self):
+        """
+        通过独立命令读取校准参数（从 SS:8 中剥离的功能）
+        注意：此方法需要通过特定命令获取校准参数，而非 SS:8
+        """
+        if not self.serial_manager.is_connected:
+            self.log_message("Error: Not connected to serial port!")
+            return
+
+        self.log_message("Starting calibration parameters reading process...")
+        # TODO: 在这里实现通过特定命令读取校准参数的逻辑
+        # 例如：发送 SS:? 命令获取 RACKS, RACOF, REACKS, REACOF, VROOF, GROOF 等参数
+        threading.Thread(target=self._read_calibration_params_thread, daemon=True).start()
+
+    def _read_calibration_params_thread(self):
+        """在线程中读取校准参数"""
+        try:
+            # 停止数据流
+            if self.is_reading:
+                self.root.after(0, lambda: self.log_message("Stopping data stream..."))
+                self.root.after(0, self.stop_data_stream)
+                time.sleep(1.0)
+
+            # 清空缓冲区
+            if self.serial_manager.serial_port:
+                self.serial_manager.serial_port.reset_input_buffer()
+                time.sleep(0.5)
+
+            # TODO: 发送获取校准参数的命令
+            # 例如：self.serial_manager.send_ssX_get_calibration()
+            self.root.after(0, lambda: self.log_message("Sending calibration params request command..."))
+            
+            # 等待响应并解析
+            time.sleep(2.0)
+            
+            # TODO: 解析校准参数响应
+            # 临时显示提示信息
+            self.root.after(0, lambda: self.log_message("Calibration params reading not yet implemented - needs specific command"))
+            self.root.after(0, lambda: self.log_message("Expected params: RACKS, RACOF, REACKS, REACOF, VROOF, GROOF"))
+
+        except Exception as e:
+            self.root.after(0, lambda: self.log_message(f"Error reading calibration params: {str(e)}"))
+
+        finally:
+            # 恢复数据流
+            if self.is_reading:
+                self.root.after(0, lambda: self.log_message("Restarting data stream..."))
+                time.sleep(1.0)
+                self.root.after(0, self.start_data_stream)
+
+    def verify_activation_status(self):
+        """
+        通过独立命令验证激活状态（从 SS:8 中剥离的功能）
+        注意：此方法需要通过特定命令获取 AKY/PK 字段，而非 SS:8
+        """
+        if not self.serial_manager.is_connected:
+            self.log_message("Error: Not connected to serial port!")
+            return
+
+        if not self.mac_address:
+            self.log_message("Error: MAC address not available. Please read sensor properties first.")
+            return
+
+        self.log_message("Starting activation status verification...")
+        threading.Thread(target=self._verify_activation_thread, daemon=True).start()
+
+    def _verify_activation_thread(self):
+        """在线程中验证激活状态"""
+        try:
+            # 停止数据流
+            if self.is_reading:
+                self.root.after(0, lambda: self.log_message("Stopping data stream..."))
+                self.root.after(0, self.stop_data_stream)
+                time.sleep(1.0)
+
+            # 清空缓冲区
+            if self.serial_manager.serial_port:
+                self.serial_manager.serial_port.reset_input_buffer()
+                time.sleep(0.5)
+
+            # TODO: 发送获取激活状态的命令
+            # 例如：self.serial_manager.send_ssX_get_activation()
+            self.root.after(0, lambda: self.log_message("Sending activation status request command..."))
+            
+            # 等待响应并解析
+            time.sleep(2.0)
+            
+            # TODO: 解析激活状态响应，获取 AKY/PK 字段
+            # 临时显示提示信息
+            self.root.after(0, lambda: self.log_message("Activation status verification not yet implemented - needs specific command"))
+            self.root.after(0, lambda: self.log_message("Expected fields: AKY/PK for activation key verification"))
+            
+            # 显示当前已知的激活信息（基于已有数据）
+            self.root.after(0, self._display_activation_info)
+
+        except Exception as e:
+            self.root.after(0, lambda: self.log_message(f"Error verifying activation status: {str(e)}"))
+
+        finally:
+            # 恢复数据流
+            if self.is_reading:
+                self.root.after(0, lambda: self.log_message("Restarting data stream..."))
+                time.sleep(1.0)
+                self.root.after(0, self.start_data_stream)
 
     def _auto_save_properties(self):
         """自动保存属性到文件"""

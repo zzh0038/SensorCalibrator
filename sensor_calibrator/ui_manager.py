@@ -326,6 +326,7 @@ class UIManager:
         row2.pack(fill="x", pady=1)
         
         read_btn = ttk.Button(
+            row2,
             text="Read User Info",
             command=self.callbacks.get('read_properties', lambda: None),
             state="disabled",
@@ -343,6 +344,20 @@ class UIManager:
         )
         resend_btn.pack(side="left", padx=2, expand=True, fill="x")
         self.widgets['resend_btn'] = resend_btn
+        
+        # 第三行 - 设备信息读取
+        row3 = ttk.Frame(cmd_content)
+        row3.pack(fill="x", pady=1)
+        
+        read_device_btn = ttk.Button(
+            row3,
+            text="Read Calibration Params",
+            command=self.callbacks.get('read_device_info', lambda: None),
+            state="disabled",
+            width=32,  # 加宽以适应单行
+        )
+        read_device_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['read_device_btn'] = read_device_btn
     
     def _setup_coordinate_section(self):
         """设置坐标模式控制区域"""
