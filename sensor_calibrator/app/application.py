@@ -1835,6 +1835,22 @@ class SensorCalibratorApp:
                 if hasattr(self, 'mqtt_port_var'):
                     self.mqtt_port_var.set(str(port))
 
+            # OTA URL 配置
+            url1 = sys_info.get("URL1", "")
+            url2 = sys_info.get("URL2", "")
+            url3 = sys_info.get("URL3", "")
+            url4 = sys_info.get("URL4", "")
+            
+            self.ota_params = {"URL1": url1, "URL2": url2, "URL3": url3, "URL4": url4}
+            if hasattr(self, 'URL1_var'):
+                self.URL1_var.set(url1)
+            if hasattr(self, 'URL2_var'):
+                self.URL2_var.set(url2)
+            if hasattr(self, 'URL3_var'):
+                self.URL3_var.set(url3)
+            if hasattr(self, 'URL4_var'):
+                self.URL4_var.set(url4)
+
         self.root.after(0, self.enable_config_buttons)
 
     def _display_network_summary(self):
