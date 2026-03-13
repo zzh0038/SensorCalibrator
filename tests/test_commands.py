@@ -188,7 +188,7 @@ class TestActivationKey(unittest.TestCase):
         """Test key verification with correct fragment."""
         mac = "AA:BB:CC:DD:EE:FF"
         full_key = self.workflow.generate_key_from_mac(mac)
-        key_fragment = full_key[:16]  # 16 characters (64-bit key space)
+        key_fragment = full_key[5:12]  # 7 characters (generated_key[5:12])
         
         # Should verify successfully
         result = self.workflow.verify_key(key_fragment)

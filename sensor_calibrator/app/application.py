@@ -58,6 +58,7 @@ class SensorCalibratorApp:
         self.mac_address = None
         self.generated_key = None
         self.sensor_activated = False
+        self._aky_from_ss13 = None  # SS:13 读取的激活密钥
 
         # 校准状态
         self.is_calibrating = False
@@ -354,6 +355,7 @@ class SensorCalibratorApp:
         
         # 激活相关变量
         self.mac_var = self.ui_manager.vars.get('activation_mac')
+        self.key_var = self.ui_manager.vars.get('activation_key')
         
         # WiFi 配置变量
         self.ssid_var = self.ui_manager.vars.get('ssid')
@@ -968,8 +970,16 @@ class SensorCalibratorApp:
         self.sensor_activated = is_activated
         return is_activated
 
-    def update_activation_status(self):
-        """更新激活状态显示"""
+    def update_activation_status(self, activated=None):
+        """更新激活状态显示
+        
+        Args:
+            activated: 可选参数，如果传入则使用该值，否则使用 self.sensor_activated
+        """
+        # 如果传入了参数，更新状态
+        if activated is not None:
+            self.sensor_activated = activated
+        
         if self.sensor_activated:
             self.log_message("Sensor activation status: ACTIVATED")
             if self.activation_status_var:
@@ -1367,6 +1377,10 @@ class SensorCalibratorApp:
                         try:
                             device_info = json.loads(json_str)
                             self.root.after(0, lambda l=len(json_str): self.log_message(f"Complete JSON received: {l} bytes"))
+                            # 保存 AKY（如果有）
+                            if "sys" in device_info and "AKY" in device_info["sys"]:
+                                aky_value = device_info["sys"]["AKY"]
+                                self.root.after(0, lambda a=aky_value: self._save_aky_from_ss13(a))
                             # 使用默认参数正确捕获 device_info 的值
                             self.root.after(0, lambda d=device_info: self._display_device_info(d))
                             return
@@ -1572,6 +1586,7 @@ class SensorCalibratorApp:
                             self.sensor_properties = json.loads(json_str)
                             self.root.after(0, lambda l=len(json_str): self.log_message(f"Complete JSON received: {l} bytes"))
                             self.root.after(0, self._extract_mac_only)
+                            self.root.after(0, self._try_update_activation_status)  # 尝试更新激活状态
                             self.root.after(0, self._display_sensor_properties)
                             self.root.after(0, self._extract_network_config)
                             self.root.after(0, self.extract_and_display_alarm_threshold)
@@ -1604,6 +1619,7 @@ class SensorCalibratorApp:
                     self.root.after(0, lambda: self.log_message(f"Parsed {len(parsed_props.get('sys', {}))} properties via fallback"))
                     self.sensor_properties = parsed_props
                     self.root.after(0, self._extract_mac_only)
+                    self.root.after(0, self._try_update_activation_status)  # 尝试更新激活状态
                     self.root.after(0, self._display_sensor_properties)
                     self.root.after(0, self._extract_network_config)
                     self.root.after(0, self.extract_and_display_alarm_threshold)
@@ -1643,6 +1659,14 @@ class SensorCalibratorApp:
                 hash_object = hashlib.sha256(mac_bytes)
                 self.generated_key = hash_object.hexdigest()
                 self.log_message(f"Generated activation key from MAC {self.mac_address}")
+                
+                # 更新 UI 显示
+                if self.mac_var:
+                    self.mac_var.set(self.mac_address)
+                if self.key_var and self.generated_key:
+                    # 显示密钥片段（7位：generated_key[5:12]）
+                    key_display = self.generated_key[5:12] if len(self.generated_key) >= 12 else self.generated_key[:7]
+                    self.key_var.set(key_display)
             # 注意：激活状态检查已移除此方法，请使用 verify_activation_status() 单独验证
 
     def _extract_and_process_mac(self):
@@ -1670,6 +1694,65 @@ class SensorCalibratorApp:
             self._check_activation_status()
             self.update_activation_status()
 
+    def _save_aky_from_ss13(self, aky_value):
+        """保存从 SS:13 读取的 AKY"""
+        self._aky_from_ss13 = aky_value
+        self.log_message(f"AKY saved from SS:13: '{aky_value}'")
+        self._try_update_activation_status()
+
+    def _try_update_activation_status(self):
+        """
+        尝试更新激活状态
+        需要: MAC (来自 SS:8) + AKY (来自 SS:13)
+        """
+        # 检查 MAC
+        if not self.mac_address:
+            self.log_message("MAC address not available - read User Info first")
+            return
+
+        # 检查 AKY
+        if not hasattr(self, '_aky_from_ss13') or self._aky_from_ss13 is None:
+            self.log_message("MAC available but AKY not found - read Calibration Params to check activation")
+            return
+
+        aky = self._aky_from_ss13
+
+        # 两个条件都满足
+        self.log_message("Both MAC and AKY available - checking activation status")
+
+        # 生成期望的密钥片段
+        if not self.generated_key or len(self.generated_key) < 12:
+            self.log_message("Error: Generated key not available")
+            return
+
+        expected_key = self.generated_key[5:12]
+
+        # 比较（不区分大小写）
+        if aky:
+            # 调试：显示完整的比较信息
+            self.log_message(f"DEBUG: AKY length={len(aky)}, value='{aky}'")
+            self.log_message(f"DEBUG: Expected length={len(expected_key)}, value='{expected_key}'")
+            self.log_message(f"DEBUG: Full generated_key length={len(self.generated_key)}")
+            
+            # 如果 AKY 是16位（固件返回），截取[5:12]位进行比较
+            if len(aky) == 16:
+                aky_to_compare = aky[5:12]
+                self.log_message(f"DEBUG: AKY is 16 chars, extracting [5:12]: '{aky_to_compare}'")
+            elif len(aky) > len(expected_key):
+                aky_to_compare = aky[:7]
+                self.log_message(f"DEBUG: AKY longer than expected, comparing first 7 chars: '{aky_to_compare}'")
+            else:
+                aky_to_compare = aky
+                
+            self.sensor_activated = (aky_to_compare.lower() == expected_key.lower())
+            self.log_message(f"Activation check: AKY='{aky_to_compare}', Expected='{expected_key}', Match={self.sensor_activated}")
+        else:
+            self.sensor_activated = False
+            self.log_message("AKY is empty - sensor not activated")
+
+        # 更新 UI
+        self.update_activation_status()
+
     def _check_activation_status(self):
         """检查传感器激活状态"""
         if not self.sensor_properties or not self.mac_address:
@@ -1685,7 +1768,11 @@ class SensorCalibratorApp:
 
         if self.generated_key and len(self.generated_key) >= 12:
             expected_key = self.generated_key[5:12]
-            self.sensor_activated = (aks_value.lower() == expected_key.lower())
+            # 适配：固件可能返回16位AKY，截取[5:12]位进行比较
+            aks_to_compare = aks_value.lower()
+            if len(aks_value) == 16:
+                aks_to_compare = aks_value[5:12].lower()
+            self.sensor_activated = (aks_to_compare == expected_key.lower())
             self.log_message(f"Sensor activation status: {'ACTIVATED' if self.sensor_activated else 'NOT ACTIVATED'}")
 
     def _display_sensor_properties(self):

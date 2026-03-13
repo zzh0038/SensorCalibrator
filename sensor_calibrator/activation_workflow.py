@@ -64,14 +64,16 @@ class ActivationWorkflow:
         """获取激活状态"""
         return self._is_activated
     
-    # 密钥片段长度配置（16字符 = 64位密钥空间）
-    KEY_FRAGMENT_LENGTH: int = 16
+    # 密钥片段长度配置（7字符，使用 generated_key[5:12] 切片）
+    KEY_FRAGMENT_START: int = 5
+    KEY_FRAGMENT_END: int = 12
+    KEY_FRAGMENT_LENGTH: int = 7
     
     @property
     def key_fragment(self) -> Optional[str]:
-        """获取密钥片段（用于显示）- 16字符（64位密钥空间）"""
-        if self._generated_key and len(self._generated_key) >= self.KEY_FRAGMENT_LENGTH:
-            return self._generated_key[:self.KEY_FRAGMENT_LENGTH]
+        """获取密钥片段（用于显示）- 7字符（generated_key[5:12]）"""
+        if self._generated_key and len(self._generated_key) >= self.KEY_FRAGMENT_END:
+            return self._generated_key[self.KEY_FRAGMENT_START:self.KEY_FRAGMENT_END]
         return None
     
     # ==================== MAC地址处理 ====================
@@ -184,13 +186,20 @@ class ActivationWorkflow:
 
         # 生成预期密钥
         expected_key = self.generate_key_from_mac(mac)
-        expected_fragment = expected_key[:self.KEY_FRAGMENT_LENGTH]
+        expected_fragment = expected_key[self.KEY_FRAGMENT_START:self.KEY_FRAGMENT_END]
 
-        # 修复：使用 try/except 包裹 compare_digest
-        # 如果长度不匹配会抛出 TypeError，但在时间上是恒定的
-        # 避免在比较前进行长度检查导致的时序泄漏
+        # 适配：固件可能返回16位AKY，截取[5:12]位进行比较
+        actual_key = input_key.lower()
+        if len(actual_key) == 16:
+            # 固件返回16位，截取正确的7位
+            actual_key = actual_key[self.KEY_FRAGMENT_START:self.KEY_FRAGMENT_END]
+        elif len(actual_key) != self.KEY_FRAGMENT_LENGTH:
+            # 不是7位也不是16位，验证失败
+            return False
+
+        # 使用恒定时间比较防止时序攻击
         try:
-            return secrets.compare_digest(input_key.lower(), expected_fragment.lower())
+            return secrets.compare_digest(actual_key, expected_fragment.lower())
         except TypeError:
             # 长度不匹配，比较失败
             return False
@@ -316,7 +325,7 @@ class ActivationWorkflow:
             time.sleep(Config.BUFFER_CLEAR_DELAY)
 
             # 发送激活命令（使用线程安全的 send_line 回调）
-            key_fragment = generated_key[:self.KEY_FRAGMENT_LENGTH]
+            key_fragment = generated_key[self.KEY_FRAGMENT_START:self.KEY_FRAGMENT_END]
             activation_cmd = f"SET:AKY,{key_fragment}"
             if 'send_line' in self.callbacks:
                 success, error = self.callbacks['send_line'](activation_cmd)

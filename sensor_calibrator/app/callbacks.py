@@ -88,6 +88,9 @@ class AppCallbacks:
             self.app.calibrate_btn.config(state="disabled")
         if self.app.send_btn:
             self.app.send_btn.config(state="disabled")
+        
+        # 重置激活相关状态
+        self.app._aky_from_ss13 = None
     
     # ==================== 数据流相关回调 ====================
     
