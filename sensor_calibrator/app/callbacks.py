@@ -383,14 +383,14 @@ class AppCallbacks:
             self.app.log_message(f"Error loading calibration parameters: {str(e)}")
     
     def ask_read_properties(self):
-        """询问是否读取传感器属性"""
+        """询问是否读取校准参数"""
         response = messagebox.askyesno(
-            "Read Sensor Properties",
+            "Read Calibration Parameters",
             "All calibration commands have been sent successfully.\n\n"
-            "Do you want to read sensor properties now?",
+            "Do you want to read calibration parameters from device?",
         )
         if response:
-            self.read_sensor_properties()
+            self.read_device_info()
     
     def read_sensor_properties(self):
         """读取传感器属性"""

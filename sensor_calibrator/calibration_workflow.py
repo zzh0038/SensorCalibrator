@@ -4,6 +4,7 @@ Calibration Workflow Module
 Manages the 6-position calibration workflow.
 """
 
+import queue
 import sys
 import threading
 import time
@@ -184,7 +185,12 @@ class CalibrationWorkflow:
                         self._log_message("Timeout: Stopping data collection")
                         break
 
+                except queue.Empty:
+                    # 队列为空，短暂休眠后继续尝试（正常现象）
+                    time.sleep(Config.QUICK_SLEEP)
+                    continue
                 except Exception as e:
+                    # 真正的错误才记录
                     self._log_message(f"Error collecting calibration data: {e}")
                     time.sleep(Config.QUICK_SLEEP)
                     continue

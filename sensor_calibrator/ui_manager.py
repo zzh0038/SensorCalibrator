@@ -219,6 +219,23 @@ class UIManager:
         )
         position_label.pack(fill="x", padx=2, pady=1)
         self.widgets['position_label'] = position_label
+        
+        # 6位置校准顺序指引
+        guide_frame = ttk.LabelFrame(calib_content, text="6-Position Order", padding=2)
+        guide_frame.pack(fill="x", padx=2, pady=(5, 0))
+        
+        positions = [
+            "1. +X ↓ (X轴朝上)",
+            "2. -X ↓ (X轴朝下)", 
+            "3. +Y ↓ (Y轴朝上)",
+            "4. -Y ↓ (Y轴朝下)",
+            "5. +Z ↓ (Z轴朝上)",
+            "6. -Z ↓ (Z轴朝下)"
+        ]
+        
+        for pos_text in positions:
+            lbl = ttk.Label(guide_frame, text=pos_text, font=("Courier", 8))
+            lbl.pack(anchor="w", padx=5)
     
     def _setup_statistics_section(self):
         """设置实时统计信息区域"""

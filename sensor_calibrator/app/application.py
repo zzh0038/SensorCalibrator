@@ -571,7 +571,22 @@ class SensorCalibratorApp:
             self.data_btn.config(state="normal")
         if self.position_var:
             self.position_var.set("Calibration complete!")
+        
+        # 生成校准命令并显示在命令文本框中
+        commands = self.calibration_workflow.generate_calibration_commands()
+        if self.cmd_text:
+            self.cmd_text.delete(1.0, "end")
+            for cmd in commands:
+                self.cmd_text.insert("end", cmd + "\n")
+        
+        # 启用发送和保存按钮
+        if self.send_btn:
+            self.send_btn.config(state="normal")
+        if self.save_btn:
+            self.save_btn.config(state="normal")
+        
         self.log_message("Calibration finished successfully!")
+        self.log_message("Calibration commands generated. Click 'Send Commands' to upload to device.")
 
     def _on_calibration_error(self):
         """校准错误回调"""
@@ -1414,12 +1429,17 @@ class SensorCalibratorApp:
             self.log_message("No device info to display (device_info is None or empty)")
             return
         
-        if "sys" not in device_info:
-            self.log_message(f"No 'sys' field in device_info. Keys: {list(device_info.keys())}")
-            return
-
-        sys_info = device_info["sys"]
-        self.log_message(f"sys_info contains {len(sys_info)} fields: {list(sys_info.keys())}")
+        # SS:13 返回的数据可能在 "params" 字段中
+        if "params" in device_info:
+            sys_info = device_info["params"]
+            self.log_message(f"Using 'params' field with {len(sys_info)} fields")
+        elif "sys" in device_info:
+            sys_info = device_info["sys"]
+            self.log_message(f"Using 'sys' field with {len(sys_info)} fields")
+        else:
+            # 直接使用根级别的数据
+            sys_info = device_info
+            self.log_message(f"No 'params' or 'sys' field found, using root level. Keys: {list(device_info.keys())}")
 
         # 校准参数字段（SS:13 实际返回的字段）
         calibration_fields = {
@@ -1459,7 +1479,12 @@ class SensorCalibratorApp:
         self.log_message("=" * 50)
 
         # 创建弹窗显示校准参数
-        self._show_device_info_dialog(sys_info, calibration_fields)
+        try:
+            self._show_device_info_dialog(sys_info, calibration_fields)
+        except Exception as e:
+            self.log_message(f"Error showing device info dialog: {e}")
+            import traceback
+            self.log_message(traceback.format_exc())
 
     def _show_device_info_dialog(self, sys_info, calibration_fields):
         """创建弹窗显示校准参数"""
@@ -1470,7 +1495,8 @@ class SensorCalibratorApp:
         info_window.title("Calibration Parameters")
         info_window.geometry("550x500")
         info_window.transient(self.root)
-        info_window.grab_set()
+        # 移除 grab_set() 避免与 matplotlib 渲染冲突导致卡住
+        # info_window.grab_set()  # 暂时禁用模态，防止死锁
 
         main_frame = ttk.Frame(info_window, padding="10")
         main_frame.pack(fill="both", expand=True)
@@ -1513,7 +1539,11 @@ class SensorCalibratorApp:
                     value_str = str(value)
                 info_tree.insert("", "end", text=label, values=(value_str,))
                 inserted_count += 1
-                self.log_message(f"  Added to dialog: {label} = {value_str}")
+                # 移除逐行日志，避免 UI 阻塞，改为只记录总数
+        
+        # 批量日志记录，减少 UI 更新
+        if inserted_count > 0:
+            self.log_message(f"  Added {inserted_count} parameters to dialog")
         
         if inserted_count == 0:
             self.log_message("Warning: No calibration fields matched the received data")
