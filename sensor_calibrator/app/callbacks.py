@@ -577,3 +577,17 @@ class AppCallbacks:
         
         # 显示确认弹窗并重置
         self.app.reset_ui_with_confirmation()
+
+    def check_calibration_status(self):
+        """手动检查校准状态"""
+        if not self.app.sensor_properties:
+            self.app.log_message("No sensor properties available. Please read device info first.")
+            return
+        
+        self.app.log_message("Manually checking calibration status...")
+        is_calibrated = self.app.check_and_display_calibration_status()
+        
+        if is_calibrated:
+            self.app.log_message("✓ Sensor is calibrated")
+        else:
+            self.app.log_message("✗ Sensor is not calibrated")

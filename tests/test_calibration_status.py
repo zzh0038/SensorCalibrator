@@ -15,116 +15,126 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestCalibrationStatus:
     """测试传感器校准状态检测功能"""
     
-    def test_is_sensor_calibrated_no_properties(self):
+    def test_is_sensor_calibrated_no_properties(self, mocker):
         """测试无传感器属性时返回未校准"""
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        # 创建模拟对象
-        class MockApp:
-            sensor_properties = None
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = None
         
-        mock_app = MockApp()
         result = SensorCalibratorApp.is_sensor_calibrated(mock_app)
         
         assert result is False
     
-    def test_is_sensor_calibrated_empty_sys(self):
+    def test_is_sensor_calibrated_empty_sys(self, mocker):
         """测试 sys 为空时返回未校准"""
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        class MockApp:
-            sensor_properties = {"sys": {}}
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = {"sys": {}}
         
-        mock_app = MockApp()
         result = SensorCalibratorApp.is_sensor_calibrated(mock_app)
         
         assert result is False
     
-    def test_is_sensor_calibrated_default_scale(self):
+    def test_is_sensor_calibrated_default_scale(self, mocker):
         """测试 Scale 为默认值 [1.0, 1.0, 1.0] 时返回未校准"""
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        class MockApp:
-            sensor_properties = {
-                "sys": {
-                    "RACKS": [1.0, 1.0, 1.0],  # 默认 Scale
-                    "RACOF": [0.0, 0.0, 0.0],  # 默认 Offset
-                }
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = {
+            "sys": {
+                "RACKS": [1.0, 1.0, 1.0],  # 默认 Scale
+                "RACOF": [0.0, 0.0, 0.0],  # 默认 Offset
             }
+        }
         
-        mock_app = MockApp()
         result = SensorCalibratorApp.is_sensor_calibrated(mock_app)
         
         assert result is False
     
-    def test_is_sensor_calibrated_scaled(self):
+    def test_is_sensor_calibrated_scaled(self, mocker):
         """测试 Scale 偏离默认值时返回已校准"""
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        class MockApp:
-            sensor_properties = {
-                "sys": {
-                    "RACKS": [1.02, 0.98, 1.01],  # 偏离默认
-                    "RACOF": [0.0, 0.0, 0.0],
-                }
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = {
+            "sys": {
+                "RACKS": [1.02, 0.98, 1.01],  # 偏离默认
+                "RACOF": [0.0, 0.0, 0.0],
             }
+        }
         
-        mock_app = MockApp()
         result = SensorCalibratorApp.is_sensor_calibrated(mock_app)
         
         assert result is True
     
-    def test_is_sensor_calibrated_offset(self):
+    def test_is_sensor_calibrated_offset(self, mocker):
         """测试 Offset 偏离默认值时返回已校准"""
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        class MockApp:
-            sensor_properties = {
-                "sys": {
-                    "RACKS": [1.0, 1.0, 1.0],
-                    "RACOF": [0.05, -0.03, 0.02],  # 偏离默认
-                }
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = {
+            "sys": {
+                "RACKS": [1.0, 1.0, 1.0],
+                "RACOF": [0.05, -0.03, 0.02],  # 偏离默认
             }
+        }
         
-        mock_app = MockApp()
         result = SensorCalibratorApp.is_sensor_calibrated(mock_app)
         
         assert result is True
     
-    def test_is_sensor_calibrated_adxl_calibrated(self):
+    def test_is_sensor_calibrated_adxl_calibrated(self, mocker):
         """测试 ADXL355 校准参数有效时返回已校准"""
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        class MockApp:
-            sensor_properties = {
-                "sys": {
-                    "REACKS": [0.99, 1.01, 0.98],  # 偏离默认
-                    "REACOF": [0.0, 0.0, 0.0],
-                }
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = {
+            "sys": {
+                "REACKS": [0.99, 1.01, 0.98],  # 偏离默认
+                "REACOF": [0.0, 0.0, 0.0],
             }
+        }
         
-        mock_app = MockApp()
         result = SensorCalibratorApp.is_sensor_calibrated(mock_app)
         
         assert result is True
     
-    def test_is_sensor_calibrated_gyro_calibrated(self):
+    def test_is_sensor_calibrated_gyro_calibrated(self, mocker):
         """测试陀螺仪校准参数有效时返回已校准"""
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        class MockApp:
-            sensor_properties = {
-                "sys": {
-                    "RACKS": [1.0, 1.0, 1.0],
-                    "RACOF": [0.0, 0.0, 0.0],
-                    "VROOF": [0.05, -0.02, 0.03],  # 偏离默认
-                }
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = {
+            "sys": {
+                "RACKS": [1.0, 1.0, 1.0],
+                "RACOF": [0.0, 0.0, 0.0],
+                "VROOF": [0.05, -0.02, 0.03],  # 偏离默认
             }
+        }
         
-        mock_app = MockApp()
         result = SensorCalibratorApp.is_sensor_calibrated(mock_app)
         
         assert result is True
+    
+    def test_is_sensor_calibrated_with_device_info(self, mocker):
+        """测试直接传入 device_info 参数"""
+        from sensor_calibrator.app.application import SensorCalibratorApp
+        
+        mock_app = mocker.MagicMock()
+        mock_app.sensor_properties = None  # 模拟没有 sensor_properties
+        
+        device_info = {
+            "sys": {
+                "RACKS": [0.992714, 0.995445, 0.97266],  # 用户提供的真实数据
+                "RACOF": [0.36177, 0.02194, -1.362915],
+            }
+        }
+        
+        result = SensorCalibratorApp.is_sensor_calibrated(mock_app, device_info)
+        
+        assert result is True  # 应该检测为已校准
 
 
 class TestCalibrationQuality:

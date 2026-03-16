@@ -237,6 +237,16 @@ class UIManager:
         calibration_status_label.pack(side="left", padx=2)
         self.widgets['calibration_status_label'] = calibration_status_label
         
+        # 检查校准状态按钮
+        check_calib_btn = ttk.Button(
+            calib_status_frame,
+            text="Check",
+            command=self.callbacks.get('check_calibration_status', lambda: None),
+            width=8,
+        )
+        check_calib_btn.pack(side="right", padx=2)
+        self.widgets['check_calib_btn'] = check_calib_btn
+        
         # 6位置校准顺序指引
         guide_frame = ttk.LabelFrame(calib_content, text="6-Position Order", padding=2)
         guide_frame.pack(fill="x", padx=2, pady=(5, 0))

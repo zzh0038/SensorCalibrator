@@ -335,6 +335,9 @@ class SensorCalibratorApp:
             
             # UI 重置
             'reset_ui_with_confirmation': self.ui_callbacks.reset_ui_with_confirmation,
+            
+            # 校准状态检查
+            'check_calibration_status': self.ui_callbacks.check_calibration_status,
         }
         
         # 初始化 UIManager
@@ -1434,9 +1437,8 @@ class SensorCalibratorApp:
                 self.root.after(0, lambda: self.log_message("Restarting data stream..."))
                 time.sleep(1.0)
                 self.root.after(0, self.start_data_stream)
-            
-            # 读取完成后检查校准状态
-            self.root.after(0, self.check_and_display_calibration_status)
+            # 注意：校准状态检测现在移到 _display_device_info 中，
+            # 确保在 sensor_properties 更新后再检测
 
     def _display_device_info(self, device_info):
         """显示校准参数（SS:13 返回的是校准参数）"""
@@ -1506,6 +1508,17 @@ class SensorCalibratorApp:
             self._show_device_info_dialog(sys_info, calibration_fields)
         except Exception as e:
             self.log_message(f"Error showing device info dialog: {e}")
+            import traceback
+            self.log_message(traceback.format_exc())
+        
+        # 检查并显示校准状态 - 直接传入 device_info
+        try:
+            self.log_message("DEBUG: About to check calibration status from _display_device_info", "DEBUG")
+            # 构建完整的 device_info 字典
+            full_device_info = {"sys": sys_info}
+            self.check_and_display_calibration_status(full_device_info)
+        except Exception as e:
+            self.log_message(f"Error checking calibration status: {e}")
             import traceback
             self.log_message(traceback.format_exc())
 
@@ -2054,7 +2067,7 @@ class SensorCalibratorApp:
 
         self.log_message("=" * 60)
 
-    def is_sensor_calibrated(self) -> bool:
+    def is_sensor_calibrated(self, device_info: dict = None) -> bool:
         """
         检查传感器是否已经校准
         
@@ -2062,13 +2075,28 @@ class SensorCalibratorApp:
         - Scale 参数：默认 [1.0, 1.0, 1.0]，已校准则偏离 1.0
         - Offset 参数：默认 [0.0, 0.0, 0.0] 或接近 0，已校准则明显非 0
         
+        Args:
+            device_info: 可选，直接传入设备信息字典进行检测
+        
         Returns:
             bool: True 表示已校准，False 表示未校准
         """
-        if not self.sensor_properties or "sys" not in self.sensor_properties:
+        # 确定数据源
+        if device_info is not None:
+            # 优先使用传入的参数
+            if "sys" in device_info:
+                sys_info = device_info["sys"]
+            elif "params" in device_info:
+                sys_info = device_info["params"]
+            else:
+                sys_info = device_info
+        elif self.sensor_properties and "sys" in self.sensor_properties:
+            sys_info = self.sensor_properties["sys"]
+        else:
+            self.log_message("DEBUG: is_sensor_calibrated - no data available", "DEBUG")
             return False
         
-        sys_info = self.sensor_properties["sys"]
+        self.log_message(f"DEBUG: Checking calibration with {len(sys_info)} fields", "DEBUG")
         
         # 检查关键校准参数
         calibration_params = {
@@ -2080,27 +2108,39 @@ class SensorCalibratorApp:
             "GROOF": sys_info.get("GROOF"),   # Gyro Offset (alternative)
         }
         
+        self.log_message(f"DEBUG: Calibration params found: {[k for k, v in calibration_params.items() if v is not None]}", "DEBUG")
+        
         # 如果没有任何校准参数，认为未校准
         if all(v is None for v in calibration_params.values()):
+            self.log_message("DEBUG: No calibration params found", "DEBUG")
             return False
         
         # 检查 Scale 参数是否偏离默认值 [1.0, 1.0, 1.0]
         for scale_key in ["RACKS", "REACKS"]:
             scale = calibration_params[scale_key]
             if isinstance(scale, list) and len(scale) == 3:
-                # 如果任何一个值偏离 1.0 超过阈值，认为已校准
-                if any(abs(s - 1.0) > 0.01 for s in scale):
+                max_deviation = max(abs(float(s) - 1.0) for s in scale)
+                self.log_message(f"DEBUG: {scale_key} = {scale}, max_deviation = {max_deviation:.6f}", "DEBUG")
+                if max_deviation > 0.01:
+                    self.log_message(f"DEBUG: {scale_key} deviation {max_deviation:.4f} > 0.01, CALIBRATED", "DEBUG")
                     return True
+            else:
+                self.log_message(f"DEBUG: {scale_key} is not a valid list: {type(scale)}", "DEBUG")
         
         # 检查 Offset 参数是否偏离默认值 [0.0, 0.0, 0.0]
         for offset_key in ["RACOF", "REACOF", "VROOF", "GROOF"]:
             offset = calibration_params[offset_key]
             if isinstance(offset, list) and len(offset) == 3:
-                # 如果任何一个值偏离 0 超过阈值，认为已校准
-                if any(abs(o) > 0.01 for o in offset):
+                max_offset = max(abs(float(o)) for o in offset)
+                self.log_message(f"DEBUG: {offset_key} = {offset}, max_offset = {max_offset:.6f}", "DEBUG")
+                if max_offset > 0.01:
+                    self.log_message(f"DEBUG: {offset_key} offset {max_offset:.4f} > 0.01, CALIBRATED", "DEBUG")
                     return True
+            else:
+                self.log_message(f"DEBUG: {offset_key} is not a valid list: {type(offset)}", "DEBUG")
         
         # 如果都没有偏离默认值，认为未校准
+        self.log_message("DEBUG: No significant deviation found, NOT CALIBRATED", "DEBUG")
         return False
 
     def get_calibration_quality(self) -> dict:
@@ -2180,41 +2220,58 @@ class SensorCalibratorApp:
             "details": details
         }
 
-    def check_and_display_calibration_status(self):
-        """检查并显示校准状态"""
-        quality = self.get_calibration_quality()
+    def check_and_display_calibration_status(self, device_info: dict = None):
+        """
+        检查并显示校准状态
         
+        Args:
+            device_info: 可选，直接传入设备信息字典
+        """
         self.log_message("\n" + "=" * 60)
-        self.log_message("CALIBRATION STATUS")
+        self.log_message("CALIBRATION STATUS CHECK")
         self.log_message("=" * 60)
         
-        is_calibrated = quality["is_calibrated"]
+        # 使用传入的参数或 self.sensor_properties
+        if device_info is not None:
+            self.log_message("DEBUG: Using provided device_info", "DEBUG")
+            is_calibrated = self.is_sensor_calibrated(device_info)
+            # 临时更新 sensor_properties 以便 get_calibration_quality 使用
+            old_properties = self.sensor_properties
+            self.sensor_properties = device_info
+            quality = self.get_calibration_quality()
+            self.sensor_properties = old_properties
+        else:
+            self.log_message("DEBUG: Using self.sensor_properties", "DEBUG")
+            is_calibrated = self.is_sensor_calibrated()
+            quality = self.get_calibration_quality()
+        
+        self.log_message(f"DEBUG: is_calibrated = {is_calibrated}", "DEBUG")
         
         if is_calibrated:
             self.log_message("Status: ✓ CALIBRATED")
             
             # 显示详细的校准信息
-            details = quality["details"]
+            details = quality.get("details", {})
             
-            if "mpu_accel_scale_calibrated" in details:
-                self.log_message(f"MPU6050 Accel Scale: {details['mpu_accel_scale']}")
-                self.log_message(f"  Deviation: {details['mpu_accel_scale_deviation']:.4f}")
+            if details.get("mpu_accel_scale_calibrated"):
+                self.log_message(f"MPU6050 Accel Scale: {details.get('mpu_accel_scale')}")
+                self.log_message(f"  Deviation: {details.get('mpu_accel_scale_deviation', 0):.4f}")
             
-            if "mpu_accel_offset_calibrated" in details:
-                self.log_message(f"MPU6050 Accel Offset: {details['mpu_accel_offset']}")
-                self.log_message(f"  Max Offset: {details['mpu_accel_offset_max']:.4f}")
+            if details.get("mpu_accel_offset_calibrated"):
+                self.log_message(f"MPU6050 Accel Offset: {details.get('mpu_accel_offset')}")
+                self.log_message(f"  Max Offset: {details.get('mpu_accel_offset_max', 0):.4f}")
             
-            if "adxl_accel_scale_calibrated" in details:
-                self.log_message(f"ADXL355 Accel Scale: {details['adxl_accel_scale']}")
-                self.log_message(f"  Deviation: {details['adxl_accel_scale_deviation']:.4f}")
+            if details.get("adxl_accel_scale_calibrated"):
+                self.log_message(f"ADXL355 Accel Scale: {details.get('adxl_accel_scale')}")
+                self.log_message(f"  Deviation: {details.get('adxl_accel_scale_deviation', 0):.4f}")
             
-            if "adxl_accel_offset_calibrated" in details:
-                self.log_message(f"ADXL355 Accel Offset: {details['adxl_accel_offset']}")
-                self.log_message(f"  Max Offset: {details['adxl_accel_offset_max']:.4f}")
+            if details.get("adxl_accel_offset_calibrated"):
+                self.log_message(f"ADXL355 Accel Offset: {details.get('adxl_accel_offset')}")
+                self.log_message(f"  Max Offset: {details.get('adxl_accel_offset_max', 0):.4f}")
             
-            if "gyro_calibrated" in details:
-                self.log_message(f"Gyro Offset: {details['gyro_offset']}")
-                self.log_message(f"  Max Offset: {details['gyro_offset_max']:.4f}")
+            if details.get("gyro_calibrated"):
+                self.log_message(f"Gyro Offset: {details.get('gyro_offset')}")
+                self.log_message(f"  Max Offset: {details.get('gyro_offset_max', 0):.4f}")
                 
         else:
             self.log_message("Status: ✗ NOT CALIBRATED")
