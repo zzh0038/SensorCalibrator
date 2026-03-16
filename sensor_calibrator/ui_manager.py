@@ -220,6 +220,23 @@ class UIManager:
         position_label.pack(fill="x", padx=2, pady=1)
         self.widgets['position_label'] = position_label
         
+        # 校准状态显示
+        calib_status_frame = ttk.Frame(calib_content)
+        calib_status_frame.pack(fill="x", padx=2, pady=1)
+        
+        ttk.Label(calib_status_frame, text="Status:", font=("Arial", 9)).pack(side="left", padx=2)
+        
+        calibration_status_var = StringVar(value="Unknown")
+        self.vars['calibration_status'] = calibration_status_var
+        calibration_status_label = ttk.Label(
+            calib_status_frame,
+            textvariable=calibration_status_var,
+            font=("Arial", 9, "bold"),
+            foreground="gray"
+        )
+        calibration_status_label.pack(side="left", padx=2)
+        self.widgets['calibration_status_label'] = calibration_status_label
+        
         # 6位置校准顺序指引
         guide_frame = ttk.LabelFrame(calib_content, text="6-Position Order", padding=2)
         guide_frame.pack(fill="x", padx=2, pady=(5, 0))
@@ -519,23 +536,6 @@ class UIManager:
         )
         status_label.pack(side="left", padx=2)
         self.widgets['activation_status_label'] = status_label
-        
-        # 校准状态显示
-        calib_frame = ttk.Frame(info_frame)
-        calib_frame.pack(fill="x", pady=1)
-        
-        ttk.Label(calib_frame, text="Calibration:", font=("Arial", 8)).pack(side="left", padx=2)
-        
-        calibration_status_var = StringVar(value="Unknown")
-        self.vars['calibration_status'] = calibration_status_var
-        calibration_status_label = ttk.Label(
-            calib_frame,
-            textvariable=calibration_status_var,
-            font=("Arial", 8, "bold"),
-            foreground="gray"
-        )
-        calibration_status_label.pack(side="left", padx=2)
-        self.widgets['calibration_status_label'] = calibration_status_label
     
     def _setup_network_section(self):
         """设置网络配置区域框架（具体由子方法填充）"""
