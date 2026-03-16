@@ -375,6 +375,19 @@ class UIManager:
         )
         read_device_btn.pack(side="left", padx=2, expand=True, fill="x")
         self.widgets['read_device_btn'] = read_device_btn
+        
+        # 第四行 - 刷新页面按钮
+        row4 = ttk.Frame(cmd_content)
+        row4.pack(fill="x", pady=1)
+        
+        reset_ui_btn = ttk.Button(
+            row4,
+            text="Reset UI",
+            command=self.callbacks.get('reset_ui_with_confirmation', lambda: None),
+            width=32,
+        )
+        reset_ui_btn.pack(side="left", padx=2, expand=True, fill="x")
+        self.widgets['reset_ui_btn'] = reset_ui_btn
     
     def _setup_coordinate_section(self):
         """设置坐标模式控制区域"""

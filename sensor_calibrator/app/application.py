@@ -332,6 +332,9 @@ class SensorCalibratorApp:
             'set_alarm_threshold': self.ui_callbacks.set_alarm_threshold,
             'restart_sensor': self.ui_callbacks.restart_sensor,
             'save_config': self.ui_callbacks.save_config,
+            
+            # UI 重置
+            'reset_ui_with_confirmation': self.ui_callbacks.reset_ui_with_confirmation,
         }
         
         # 初始化 UIManager
@@ -551,7 +554,12 @@ class SensorCalibratorApp:
         if connected:
             self.ser = self.serial_manager.serial_port
         else:
-            self.ser = None
+            # 如果是异常断连（非用户主动点击Disconnect）
+            if self.ser is not None:
+                self.ser = None
+                # 使用 after 确保在主线程显示弹窗
+                if self.root:
+                    self.root.after(0, self._show_device_disconnected_dialog)
 
     def _on_position_captured(self, next_position: int):
         """位置采集完成回调"""
@@ -2175,3 +2183,151 @@ class SensorCalibratorApp:
         """更新位置显示"""
         if hasattr(self, 'calibration_workflow') and self.position_var:
             self.position_var.set(self.calibration_workflow.position_progress)
+
+    # =========================================================================
+    # UI 重置功能 (UI Reset Functionality)
+    # =========================================================================
+
+    def reset_ui_state(self):
+        """
+        重置UI到初始状态
+        
+        清空所有数据、图表、统计信息，重置UI变量到初始值
+        """
+        # 1. 清空数据缓冲区
+        if hasattr(self, 'data_processor'):
+            self.data_processor.clear_all()
+        
+        # 2. 清空图表
+        if self.chart_manager:
+            self.chart_manager.clear_data()
+        
+        # 3. 重置统计标签显示
+        self._reset_statistics_display()
+        
+        # 4. 重置UI变量
+        if self.freq_var:
+            self.freq_var.set("0 Hz")
+        if self.position_var:
+            self.position_var.set("Position: Not calibrating")
+        
+        # 5. 清空命令区
+        if self.cmd_text:
+            self.cmd_text.delete(1.0, "end")
+        
+        # 6. 重置激活状态
+        self._reset_activation_display()
+        
+        # 7. 重置内部状态
+        self.packets_received = 0
+        self.serial_freq = 0
+        self._aky_from_ss13 = None
+        
+        self.log_message("UI 已重置")
+
+    def _reset_statistics_display(self):
+        """重置统计标签显示为初始值"""
+        if not self.stats_labels:
+            return
+        
+        # 重置所有轴的统计
+        for sensor_key in ['mpu_accel', 'adxl_accel', 'mpu_gyro']:
+            for axis in ['x', 'y', 'z']:
+                mean_key = f"{sensor_key}_{axis}_mean"
+                std_key = f"{sensor_key}_{axis}_std"
+                if mean_key in self.stats_labels and self.stats_labels[mean_key]:
+                    self.stats_labels[mean_key].set("μ: 0.000")
+                if std_key in self.stats_labels and self.stats_labels[std_key]:
+                    self.stats_labels[std_key].set("σ: 0.000")
+        
+        # 重置重力统计
+        if 'gravity_mean' in self.stats_labels and self.stats_labels['gravity_mean']:
+            self.stats_labels['gravity_mean'].set("Mean: 0.000")
+        if 'gravity_std' in self.stats_labels and self.stats_labels['gravity_std']:
+            self.stats_labels['gravity_std'].set("Std: 0.000")
+
+    def _reset_activation_display(self):
+        """重置激活状态显示"""
+        # 重置内部变量
+        self.sensor_properties = {}
+        self.mac_address = None
+        self.generated_key = None
+        self.sensor_activated = False
+        
+        # 重置UI显示
+        if self.mac_var:
+            self.mac_var.set("--")
+        if self.key_var:
+            self.key_var.set("")
+        if self.activation_status_var:
+            self.activation_status_var.set("Not Activated")
+        if self.activation_status_label:
+            self.activation_status_label.config(foreground="red")
+
+    def show_reset_confirmation(self, callback=None):
+        """
+        显示重置确认弹窗
+        
+        Args:
+            callback: 用户点击确定后的回调函数
+        
+        Returns:
+            bool: 用户是否点击了确定
+        """
+        from tkinter import messagebox
+        
+        result = messagebox.askokcancel(
+            "确认重置 UI",
+            "刷新页面将清空以下数据：\n"
+            "• 所有图表数据\n"
+            "• 实时统计信息\n"
+            "• 校准命令记录\n"
+            "• 传感器激活状态\n\n"
+            "此操作不可撤销。确定要继续吗？",
+            icon='warning'
+        )
+        
+        if result and callback:
+            callback()
+        
+        return result
+
+    def reset_ui_with_confirmation(self, silent=False):
+        """
+        带确认弹窗的UI重置
+        
+        Args:
+            silent: 如果为True，不显示确认弹窗直接重置（用于程序内部调用）
+        
+        Returns:
+            bool: 是否执行了重置
+        """
+        if silent:
+            self.reset_ui_state()
+            return True
+        
+        def do_reset():
+            self.reset_ui_state()
+        
+        return self.show_reset_confirmation(do_reset)
+
+    def _show_device_disconnected_dialog(self):
+        """显示设备断开连接提示框"""
+        from tkinter import messagebox
+        
+        # 先停止数据流
+        if self.is_reading:
+            self.is_reading = False
+            self.serial_manager.stop_reading()
+        
+        # 显示信息提示框
+        messagebox.showinfo(
+            "设备已断开连接",
+            "检测到设备已断开连接（USB可能被拔出）。\n\n"
+            "点击确定后将重置UI界面。",
+            icon='warning'
+        )
+        
+        # 用户点击确定后执行重置
+        self.reset_ui_state()
+        self.log_message("设备断开连接，UI 已重置")

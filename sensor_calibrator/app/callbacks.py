@@ -62,7 +62,17 @@ class AppCallbacks:
                 self.app.read_device_btn.config(state="normal")
     
     def disconnect_serial(self):
-        """断开串口连接"""
+        """断开串口连接（带确认弹窗）"""
+        # 如果正在读取数据，先停止
+        if self.app.is_reading:
+            self.stop_data_stream()
+        
+        # 显示确认弹窗
+        if not self.app.reset_ui_with_confirmation():
+            # 用户取消，不断开连接
+            return
+        
+        # 用户确认，执行断开
         self.app.serial_manager.disconnect()
         self.app.ser = None
         
@@ -91,6 +101,7 @@ class AppCallbacks:
         
         # 重置激活相关状态
         self.app._aky_from_ss13 = None
+        self.app.log_message("串口已断开连接")
     
     # ==================== 数据流相关回调 ====================
     
@@ -557,3 +568,12 @@ class AppCallbacks:
                 self.app.log_message("Error: SerialManager not available")
         except Exception as e:
             self.app.log_message(f"Error saving config: {str(e)}")
+
+    def reset_ui_with_confirmation(self):
+        """带确认的刷新页面"""
+        # 如果正在读取数据，先停止
+        if self.app.is_reading:
+            self.stop_data_stream()
+        
+        # 显示确认弹窗并重置
+        self.app.reset_ui_with_confirmation()
