@@ -360,6 +360,9 @@ class SensorCalibratorApp:
         self.mac_var = self.ui_manager.vars.get('activation_mac')
         self.key_var = self.ui_manager.vars.get('activation_key')
         
+        # 校准状态变量
+        self.calibration_status_var = self.ui_manager.vars.get('calibration_status')
+        
         # WiFi 配置变量
         self.ssid_var = self.ui_manager.vars.get('ssid')
         self.password_var = self.ui_manager.vars.get('password')
@@ -420,6 +423,9 @@ class SensorCalibratorApp:
         self.activation_status_var = self.ui_manager.vars.get('activation_status')
         self.activation_status_label = self.ui_manager.widgets.get('activation_status_label')
         self.activate_btn = self.ui_manager.widgets.get('activate_btn')
+        
+        # 校准状态控件
+        self.calibration_status_label = self.ui_manager.widgets.get('calibration_status_label')
         
         # 统计标签变量
         self.stats_labels = {
@@ -1428,6 +1434,9 @@ class SensorCalibratorApp:
                 self.root.after(0, lambda: self.log_message("Restarting data stream..."))
                 time.sleep(1.0)
                 self.root.after(0, self.start_data_stream)
+            
+            # 读取完成后检查校准状态
+            self.root.after(0, self.check_and_display_calibration_status)
 
     def _display_device_info(self, device_info):
         """显示校准参数（SS:13 返回的是校准参数）"""
@@ -2045,6 +2054,215 @@ class SensorCalibratorApp:
 
         self.log_message("=" * 60)
 
+    def is_sensor_calibrated(self) -> bool:
+        """
+        检查传感器是否已经校准
+        
+        通过检查校准参数是否为默认值来判断：
+        - Scale 参数：默认 [1.0, 1.0, 1.0]，已校准则偏离 1.0
+        - Offset 参数：默认 [0.0, 0.0, 0.0] 或接近 0，已校准则明显非 0
+        
+        Returns:
+            bool: True 表示已校准，False 表示未校准
+        """
+        if not self.sensor_properties or "sys" not in self.sensor_properties:
+            return False
+        
+        sys_info = self.sensor_properties["sys"]
+        
+        # 检查关键校准参数
+        calibration_params = {
+            "RACKS": sys_info.get("RACKS"),  # MPU6050 Scale
+            "RACOF": sys_info.get("RACOF"),  # MPU6050 Offset
+            "REACKS": sys_info.get("REACKS"),  # ADXL355 Scale
+            "REACOF": sys_info.get("REACOF"),  # ADXL355 Offset
+            "VROOF": sys_info.get("VROOF"),   # Gyro Offset
+            "GROOF": sys_info.get("GROOF"),   # Gyro Offset (alternative)
+        }
+        
+        # 如果没有任何校准参数，认为未校准
+        if all(v is None for v in calibration_params.values()):
+            return False
+        
+        # 检查 Scale 参数是否偏离默认值 [1.0, 1.0, 1.0]
+        for scale_key in ["RACKS", "REACKS"]:
+            scale = calibration_params[scale_key]
+            if isinstance(scale, list) and len(scale) == 3:
+                # 如果任何一个值偏离 1.0 超过阈值，认为已校准
+                if any(abs(s - 1.0) > 0.01 for s in scale):
+                    return True
+        
+        # 检查 Offset 参数是否偏离默认值 [0.0, 0.0, 0.0]
+        for offset_key in ["RACOF", "REACOF", "VROOF", "GROOF"]:
+            offset = calibration_params[offset_key]
+            if isinstance(offset, list) and len(offset) == 3:
+                # 如果任何一个值偏离 0 超过阈值，认为已校准
+                if any(abs(o) > 0.01 for o in offset):
+                    return True
+        
+        # 如果都没有偏离默认值，认为未校准
+        return False
+
+    def get_calibration_quality(self) -> dict:
+        """
+        获取校准质量评估
+        
+        Returns:
+            dict: 包含校准状态和各参数偏离程度的详细信息
+        """
+        if not self.sensor_properties or "sys" not in self.sensor_properties:
+            return {
+                "status": "unknown",
+                "message": "No sensor properties available",
+                "details": {}
+            }
+        
+        sys_info = self.sensor_properties["sys"]
+        details = {}
+        
+        # MPU6050 加速度计
+        racks = sys_info.get("RACKS", [1.0, 1.0, 1.0])
+        racof = sys_info.get("RACOF", [0.0, 0.0, 0.0])
+        
+        if isinstance(racks, list) and len(racks) == 3:
+            details["mpu_accel_scale"] = racks
+            details["mpu_accel_scale_deviation"] = max(abs(s - 1.0) for s in racks)
+            details["mpu_accel_scale_calibrated"] = details["mpu_accel_scale_deviation"] > 0.01
+        
+        if isinstance(racof, list) and len(racof) == 3:
+            details["mpu_accel_offset"] = racof
+            details["mpu_accel_offset_max"] = max(abs(o) for o in racof)
+            details["mpu_accel_offset_calibrated"] = details["mpu_accel_offset_max"] > 0.01
+        
+        # ADXL355 加速度计
+        reacks = sys_info.get("REACKS", [1.0, 1.0, 1.0])
+        reacof = sys_info.get("REACOF", [0.0, 0.0, 0.0])
+        
+        if isinstance(reacks, list) and len(reacks) == 3:
+            details["adxl_accel_scale"] = reacks
+            details["adxl_accel_scale_deviation"] = max(abs(s - 1.0) for s in reacks)
+            details["adxl_accel_scale_calibrated"] = details["adxl_accel_scale_deviation"] > 0.01
+        
+        if isinstance(reacof, list) and len(reacof) == 3:
+            details["adxl_accel_offset"] = reacof
+            details["adxl_accel_offset_max"] = max(abs(o) for o in reacof)
+            details["adxl_accel_offset_calibrated"] = details["adxl_accel_offset_max"] > 0.01
+        
+        # 陀螺仪
+        vroof = sys_info.get("VROOF", [0.0, 0.0, 0.0])
+        groof = sys_info.get("GROOF", [0.0, 0.0, 0.0])
+        
+        if isinstance(vroof, list) and len(vroof) == 3:
+            details["gyro_offset"] = vroof
+            details["gyro_offset_max"] = max(abs(o) for o in vroof)
+            details["gyro_calibrated"] = details["gyro_offset_max"] > 0.01
+        
+        # 综合判断
+        is_calibrated = any([
+            details.get("mpu_accel_scale_calibrated", False),
+            details.get("mpu_accel_offset_calibrated", False),
+            details.get("adxl_accel_scale_calibrated", False),
+            details.get("adxl_accel_offset_calibrated", False),
+            details.get("gyro_calibrated", False),
+        ])
+        
+        if is_calibrated:
+            status = "calibrated"
+            message = "Sensor has been calibrated"
+        else:
+            status = "uncalibrated"
+            message = "Sensor not calibrated - Calibration recommended"
+        
+        return {
+            "status": status,
+            "message": message,
+            "is_calibrated": is_calibrated,
+            "details": details
+        }
+
+    def check_and_display_calibration_status(self):
+        """检查并显示校准状态"""
+        quality = self.get_calibration_quality()
+        
+        self.log_message("\n" + "=" * 60)
+        self.log_message("CALIBRATION STATUS")
+        self.log_message("=" * 60)
+        
+        is_calibrated = quality["is_calibrated"]
+        
+        if is_calibrated:
+            self.log_message("Status: ✓ CALIBRATED")
+            
+            # 显示详细的校准信息
+            details = quality["details"]
+            
+            if "mpu_accel_scale_calibrated" in details:
+                self.log_message(f"MPU6050 Accel Scale: {details['mpu_accel_scale']}")
+                self.log_message(f"  Deviation: {details['mpu_accel_scale_deviation']:.4f}")
+            
+            if "mpu_accel_offset_calibrated" in details:
+                self.log_message(f"MPU6050 Accel Offset: {details['mpu_accel_offset']}")
+                self.log_message(f"  Max Offset: {details['mpu_accel_offset_max']:.4f}")
+            
+            if "adxl_accel_scale_calibrated" in details:
+                self.log_message(f"ADXL355 Accel Scale: {details['adxl_accel_scale']}")
+                self.log_message(f"  Deviation: {details['adxl_accel_scale_deviation']:.4f}")
+            
+            if "adxl_accel_offset_calibrated" in details:
+                self.log_message(f"ADXL355 Accel Offset: {details['adxl_accel_offset']}")
+                self.log_message(f"  Max Offset: {details['adxl_accel_offset_max']:.4f}")
+            
+            if "gyro_calibrated" in details:
+                self.log_message(f"Gyro Offset: {details['gyro_offset']}")
+                self.log_message(f"  Max Offset: {details['gyro_offset_max']:.4f}")
+                
+        else:
+            self.log_message("Status: ✗ NOT CALIBRATED")
+            self.log_message("")
+            self.log_message("⚠️  WARNING: Sensor calibration required!")
+            self.log_message("")
+            self.log_message("To calibrate the sensor:")
+            self.log_message("1. Click 'Start Data Stream' to begin data acquisition")
+            self.log_message("2. Click 'Start Calib' to enter calibration mode")
+            self.log_message("3. Follow the 6-position calibration procedure:")
+            self.log_message("   Position 1: +X facing down (X-axis up)")
+            self.log_message("   Position 2: -X facing down (X-axis down)")
+            self.log_message("   Position 3: +Y facing down (Y-axis up)")
+            self.log_message("   Position 4: -Y facing down (Y-axis down)")
+            self.log_message("   Position 5: +Z facing down (Z-axis up)")
+            self.log_message("   Position 6: -Z facing down (Z-axis down)")
+            self.log_message("4. Click 'Capture Pos' at each position")
+            self.log_message("5. After all positions captured, send calibration commands")
+        
+        self.log_message("=" * 60)
+        
+        # 更新UI显示
+        self.update_calibration_status_display(is_calibrated)
+        
+        return is_calibrated
+
+    def update_calibration_status_display(self, is_calibrated: bool = None):
+        """
+        更新校准状态UI显示
+        
+        Args:
+            is_calibrated: 校准状态，None 表示自动检测
+        """
+        if is_calibrated is None:
+            is_calibrated = self.is_sensor_calibrated()
+        
+        if hasattr(self, 'calibration_status_var') and self.calibration_status_var:
+            if is_calibrated:
+                self.calibration_status_var.set("Calibrated")
+            else:
+                self.calibration_status_var.set("Not Calibrated")
+        
+        if hasattr(self, 'calibration_status_label') and self.calibration_status_label:
+            if is_calibrated:
+                self.calibration_status_label.config(foreground="green")
+            else:
+                self.calibration_status_label.config(foreground="orange")
+
     def read_calibration_params(self):
         """
         通过独立命令读取校准参数（从 SS:8 中剥离的功能）
@@ -2263,6 +2481,12 @@ class SensorCalibratorApp:
             self.activation_status_var.set("Not Activated")
         if self.activation_status_label:
             self.activation_status_label.config(foreground="red")
+        
+        # 重置校准状态显示
+        if self.calibration_status_var:
+            self.calibration_status_var.set("Unknown")
+        if self.calibration_status_label:
+            self.calibration_status_label.config(foreground="gray")
 
     def show_reset_confirmation(self, callback=None):
         """
