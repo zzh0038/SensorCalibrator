@@ -356,29 +356,29 @@ class CalibrationWorkflow:
 
         commands = []
 
-        # MPU6050加速度计校准
+        # MPU6050加速度计校准 - 使用新格式指令
         scale = self._calibration_params["mpu_accel_scale"]
         offset = self._calibration_params["mpu_accel_offset"]
         commands.append(
-            f"SET:CAS,MPU,SCAL,{scale[0]:.6f},{scale[1]:.6f},{scale[2]:.6f}"
+            f"SET:RACKS,{scale[0]:.6f},{scale[1]:.6f},{scale[2]:.6f}"
         )
         commands.append(
-            f"SET:CAS,MPU,OFFS,{offset[0]:.6f},{offset[1]:.6f},{offset[2]:.6f}"
+            f"SET:RACOF,{offset[0]:.6f},{offset[1]:.6f},{offset[2]:.6f}"
         )
 
-        # ADXL355加速度计校准
+        # ADXL355加速度计校准 - 使用新格式指令
         scale = self._calibration_params["adxl_accel_scale"]
         offset = self._calibration_params["adxl_accel_offset"]
         commands.append(
-            f"SET:CAS,ADXL,SCAL,{scale[0]:.6f},{scale[1]:.6f},{scale[2]:.6f}"
+            f"SET:REACKS,{scale[0]:.6f},{scale[1]:.6f},{scale[2]:.6f}"
         )
         commands.append(
-            f"SET:CAS,ADXL,OFFS,{offset[0]:.6f},{offset[1]:.6f},{offset[2]:.6f}"
+            f"SET:REACOF,{offset[0]:.6f},{offset[1]:.6f},{offset[2]:.6f}"
         )
 
-        # 陀螺仪校准
+        # 陀螺仪校准 - 使用新格式指令
         gyro = self._calibration_params["mpu_gyro_offset"]
-        commands.append(f"SET:CAS,GYRO,OFFS,{gyro[0]:.6f},{gyro[1]:.6f},{gyro[2]:.6f}")
+        commands.append(f"SET:VROOF,{gyro[0]:.6f},{gyro[1]:.6f},{gyro[2]:.6f}")
 
         return commands
 

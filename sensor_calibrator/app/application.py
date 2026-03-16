@@ -1423,23 +1423,29 @@ class SensorCalibratorApp:
 
     def _display_device_info(self, device_info):
         """显示校准参数（SS:13 返回的是校准参数）"""
+        import json
         self.log_message(f"_display_device_info called with data: {type(device_info)}")
         
         if not device_info:
             self.log_message("No device info to display (device_info is None or empty)")
             return
         
-        # SS:13 返回的数据可能在 "params" 字段中
-        if "params" in device_info:
-            sys_info = device_info["params"]
-            self.log_message(f"Using 'params' field with {len(sys_info)} fields")
-        elif "sys" in device_info:
+        # 打印完整的 device_info 用于调试
+        self.log_message(f"DEBUG: Full device_info keys: {list(device_info.keys())}")
+        self.log_message(f"DEBUG: Full device_info content:\n{json.dumps(device_info, indent=2)}")
+        
+        # SS:13 返回的数据优先从 "sys" 字段中获取（校准参数在这里）
+        # 如果 "sys" 不存在，则尝试 "params" 字段
+        if "sys" in device_info:
             sys_info = device_info["sys"]
             self.log_message(f"Using 'sys' field with {len(sys_info)} fields")
+        elif "params" in device_info:
+            sys_info = device_info["params"]
+            self.log_message(f"Using 'params' field with {len(sys_info)} fields")
         else:
             # 直接使用根级别的数据
             sys_info = device_info
-            self.log_message(f"No 'params' or 'sys' field found, using root level. Keys: {list(device_info.keys())}")
+            self.log_message(f"No 'sys' or 'params' field found, using root level. Keys: {list(device_info.keys())}")
 
         # 校准参数字段（SS:13 实际返回的字段）
         calibration_fields = {
