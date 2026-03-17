@@ -60,6 +60,9 @@ class AppCallbacks:
                 self.app.read_props_btn.config(state="normal")
             if self.app.read_device_btn:
                 self.app.read_device_btn.config(state="normal")
+            
+            # 启用网络配置按钮
+            self.app.enable_config_buttons()
     
     def disconnect_serial(self):
         """断开串口连接（带确认弹窗）"""
@@ -68,36 +71,17 @@ class AppCallbacks:
             self.stop_data_stream()
         
         # 显示确认弹窗
-        if not self.app.reset_ui_with_confirmation():
+        if not self.app.show_reset_confirmation():
             # 用户取消，不断开连接
             return
         
         # 用户确认，执行断开
-        self.app.serial_manager.disconnect()
+        # 先标记 ser 为 None，避免 _on_connection_state_changed 误判为异常断开
         self.app.ser = None
+        self.app.serial_manager.disconnect()
         
-        if self.app.connect_btn:
-            self.app.connect_btn.config(text="Connect")
-        if self.app.data_btn:
-            self.app.data_btn.config(text="Start Data Stream")
-            self.app.data_btn.config(state="disabled")
-        if self.app.data_btn2:
-            self.app.data_btn2.config(text="Start CAS Stream")
-            self.app.data_btn2.config(state="disabled")
-        if self.app.read_props_btn:
-            self.app.read_props_btn.config(state="disabled")
-        if self.app.read_device_btn:
-            self.app.read_device_btn.config(state="disabled")
-        if self.app.resend_btn:
-            self.app.resend_btn.config(state="disabled")
-        if self.app.local_coord_btn:
-            self.app.local_coord_btn.config(state="disabled")
-        if self.app.global_coord_btn:
-            self.app.global_coord_btn.config(state="disabled")
-        if self.app.calibrate_btn:
-            self.app.calibrate_btn.config(state="disabled")
-        if self.app.send_btn:
-            self.app.send_btn.config(state="disabled")
+        # 重置UI（包含所有按钮状态）
+        self.app.reset_ui_state()
         
         # 重置激活相关状态
         self.app._aky_from_ss13 = None

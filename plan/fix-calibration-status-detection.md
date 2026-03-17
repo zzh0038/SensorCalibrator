@@ -1,6 +1,6 @@
 # 修复 Calibration Status 检测问题
 
-## 问题描述
+## 问题描述 ✅ 已修复
 传感器已校准（从 SS:13 返回的数据可以看出），但 UI 显示 "Not Calibrated"。
 
 ## 数据分析
@@ -21,28 +21,67 @@
 
 所有关键参数都明显偏离默认值，应该显示 "Calibrated"。
 
-## 可能原因
-1. `sensor_properties` 数据结构不一致（有时是 `sys`，有时是 `params`）
-2. 校准状态检测在 `sensor_properties` 更新前执行
-3. `is_sensor_calibrated()` 方法中的类型检查失败
-4. UI 更新时 `calibration_status_var` 为 None
+## 根本原因
+1. `check_and_display_calibration_status()` 在 `_read_device_info_thread` 的 finally 块中调用
+2. 此时 `sensor_properties` 可能还没有被更新（`_display_device_info` 之后执行）
+3. 检测时使用的是旧的或未设置的数据
 
-## 修复方案
+## 修复方案 ✅ 已实施
 
-### Task 1: 添加调试日志
-在 `is_sensor_calibrated()` 和 `check_and_display_calibration_status()` 中添加详细日志，帮助定位问题。
+### Task 1: 添加调试日志 ✅
+在 `is_sensor_calibrated()` 中添加详细日志，显示：
+- 检测时使用的数据来源
+- 每个参数的偏差值
+- 判断结果
 
-### Task 2: 修复数据访问逻辑
-确保从 `_display_device_info()` 中正确传递校准参数。
+### Task 2: 修复数据访问逻辑 ✅
+- 修改 `is_sensor_calibrated()` 支持直接传入 `device_info` 参数
+- 修改 `check_and_display_calibration_status()` 支持直接传入 `device_info`
+- 在 `_display_device_info()` 中直接传入 `sys_info` 进行检测
 
-### Task 3: 改进校准状态检测
-- 支持从 `device_info` 直接检测（不依赖 `self.sensor_properties`）
-- 添加类型转换，处理可能的字符串/数字混合格式
+### Task 3: 改进校准状态检测 ✅
+- 添加 `float()` 类型转换，处理可能的字符串/数字混合格式
+- 确保从 `device_info` 直接检测时正确构建数据结构
 
-### Task 4: 确保调用时机正确
-确保 `check_and_display_calibration_status()` 在数据完全解析后调用。
+### Task 4: 确保调用时机正确 ✅
+- 将校准状态检测从 `_read_device_info_thread` 的 finally 块移到 `_display_device_info()` 中
+- 确保在数据完全解析并显示后再检测
 
-### Task 5: 添加强制检测按钮
-在 Calibration block 添加 "Check Calib Status" 按钮，允许用户手动触发检测。
+### Task 5: 添加强制检测按钮 ✅
+在 Calibration block 添加 "Check" 按钮，允许用户手动触发检测
 
-## 实施步骤
+## 修改文件
+- `sensor_calibrator/app/application.py` - 核心检测逻辑
+- `sensor_calibrator/app/callbacks.py` - 添加手动检测回调
+- `sensor_calibrator/ui_manager.py` - 添加 Check 按钮
+- `tests/test_calibration_status.py` - 更新测试
+
+## 测试 ✅ 全部通过
+```
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_no_properties PASSED
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_empty_sys PASSED
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_default_scale PASSED
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_scaled PASSED
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_offset PASSED
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_adxl_calibrated PASSED
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_gyro_calibrated PASSED
+tests/test_calibration_status.py::TestCalibrationStatus::test_is_sensor_calibrated_with_device_info PASSED
+tests/test_calibration_status.py::TestCalibrationQuality::test_get_calibration_quality_no_properties PASSED
+tests/test_calibration_status.py::TestCalibrationQuality::test_get_calibration_quality_uncalibrated PASSED
+tests/test_calibration_status.py::TestCalibrationQuality::test_get_calibration_quality_calibrated PASSED
+tests/test_calibration_status.py::TestCalibrationQuality::test_get_calibration_quality_deviation_values PASSED
+tests/test_calibration_status.py::TestCalibrationStatusDisplay::test_update_calibration_status_display_calibrated PASSED
+tests/test_calibration_status.py::TestCalibrationStatusDisplay::test_update_calibration_status_display_uncalibrated PASSED
+tests/test_calibration_status.py::TestCalibrationStatusDisplay::test_update_calibration_status_display_auto_detect PASSED
+```
+
+## 使用说明
+1. 点击 "Read Calibration Params" 后，校准状态会自动检测并显示
+2. 如果状态显示不正确，可以点击 "Check" 按钮手动触发检测
+3. 查看日志中的 "DEBUG" 信息可以了解检测详情
+
+## 提交
+```
+commit f5c3e34
+fix: 修复校准状态检测问题
+```

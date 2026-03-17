@@ -160,6 +160,10 @@ class SerialConfig:
     READ_SLEEP_DATA: Final[float] = 0.001  # When data available
     READ_SLEEP_IDLE: Final[float] = 0.01  # When no data
     READ_ERROR_SLEEP: Final[float] = 0.05  # After read error
+    
+    # Connection health check
+    HEALTH_CHECK_INTERVAL: Final[float] = 2.0  # 健康检查间隔（秒）
+    NO_DATA_TIMEOUT: Final[float] = 5.0  # 无数据超时（秒），超过此时间没有数据且健康检查失败则认为断开
 
 
 class UIConfig:

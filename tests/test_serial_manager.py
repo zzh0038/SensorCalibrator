@@ -140,7 +140,7 @@ class TestDisconnect(unittest.TestCase):
         manager.connect("COM3", 115200)
         manager.disconnect()
 
-        callbacks["update_connection_state"].assert_called_with(False)
+        callbacks["update_connection_state"].assert_called_with(False, user_initiated=True)
 
 
 class TestLogMessage(unittest.TestCase):

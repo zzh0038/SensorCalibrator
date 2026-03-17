@@ -558,14 +558,20 @@ class SensorCalibratorApp:
         except Exception:
             pass
 
-    def _on_connection_state_changed(self, connected: bool):
-        """串口连接状态变化回调"""
+    def _on_connection_state_changed(self, connected: bool, user_initiated: bool = False):
+        """
+        串口连接状态变化回调
+        
+        Args:
+            connected: 是否已连接
+            user_initiated: 是否为用户主动断开（点击 Disconnect 按钮）
+        """
         if connected:
             self.ser = self.serial_manager.serial_port
         else:
-            # 如果是异常断连（非用户主动点击Disconnect）
-            if self.ser is not None:
-                self.ser = None
+            self.ser = None
+            # 如果不是用户主动断开（异常断连），显示弹窗
+            if not user_initiated:
                 # 使用 after 确保在主线程显示弹窗
                 if self.root:
                     self.root.after(0, self._show_device_disconnected_dialog)
@@ -960,18 +966,8 @@ class SensorCalibratorApp:
         updated = self.chart_manager.update_charts(data_dict)
         
         if updated:
-            stats = self.data_processor.get_statistics()
-            stats_dict = {
-                'window_size': self.stats_window_size,
-                'mpu_accel_mean': stats['mpu_accel_mean'],
-                'mpu_accel_std': stats['mpu_accel_std'],
-                'adxl_accel_mean': stats['adxl_accel_mean'],
-                'adxl_accel_std': stats['adxl_accel_std'],
-                'mpu_gyro_mean': stats['mpu_gyro_mean'],
-                'mpu_gyro_std': stats['mpu_gyro_std'],
-                'gravity_mean': stats['gravity_mean'],
-                'gravity_std': stats['gravity_std'],
-            }
+            # 计算图表显示数据的统计信息（与图表显示窗口一致）
+            stats_dict = self._calculate_chart_stats(data_dict)
             self.chart_manager.update_statistics_text(stats_dict)
 
     def parse_sensor_data(self, data_string):
@@ -981,6 +977,92 @@ class SensorCalibratorApp:
     def clear_data(self):
         """清空所有数据"""
         self.data_processor.clear_all()
+
+    def _calculate_chart_stats(self, data_dict: dict) -> dict:
+        """
+        计算图表显示数据的统计信息
+        
+        与图表显示使用相同的数据窗口，确保统计信息与图表显示一致
+        
+        Args:
+            data_dict: 包含显示数据的字典
+            
+        Returns:
+            包含统计信息的字典
+        """
+        import numpy as np
+        
+        # 获取数据
+        mpu_accel = data_dict.get('mpu_accel', [[], [], []])
+        adxl_accel = data_dict.get('adxl_accel', [[], [], []])
+        mpu_gyro = data_dict.get('mpu_gyro', [[], [], []])
+        gravity = data_dict.get('gravity', [])
+        
+        # 如果启用了降采样，图表实际显示的数据可能更少
+        # 我们需要计算图表实际显示的数据的统计信息
+        time_data = data_dict.get('time', [])
+        if not time_data:
+            return self._get_empty_chart_stats()
+        
+        # 确定实际显示的数据点数（与 chart_manager 逻辑一致）
+        display_points = len(time_data)
+        if Config.ENABLE_DATA_DECIMATION and len(time_data) > Config.DISPLAY_DATA_POINTS * 2:
+            # 降采样后的数据点数
+            decimation = Config.CHART_DECIMATION_FACTOR
+            display_points = len(time_data[::decimation])
+        
+        # 计算最近显示数据的统计信息（使用最后 min(STATS_WINDOW_SIZE, display_points) 个）
+        window_size = min(Config.STATS_WINDOW_SIZE, display_points)
+        
+        stats_dict = {
+            'window_size': window_size,
+            'mpu_accel_mean': [0.0, 0.0, 0.0],
+            'mpu_accel_std': [0.0, 0.0, 0.0],
+            'adxl_accel_mean': [0.0, 0.0, 0.0],
+            'adxl_accel_std': [0.0, 0.0, 0.0],
+            'mpu_gyro_mean': [0.0, 0.0, 0.0],
+            'mpu_gyro_std': [0.0, 0.0, 0.0],
+            'gravity_mean': 0.0,
+            'gravity_std': 0.0,
+        }
+        
+        # 计算各通道统计
+        for i in range(3):
+            if len(mpu_accel[i]) >= window_size:
+                data = mpu_accel[i][-window_size:]
+                stats_dict['mpu_accel_mean'][i] = float(np.mean(data))
+                stats_dict['mpu_accel_std'][i] = float(np.std(data))
+            
+            if len(adxl_accel[i]) >= window_size:
+                data = adxl_accel[i][-window_size:]
+                stats_dict['adxl_accel_mean'][i] = float(np.mean(data))
+                stats_dict['adxl_accel_std'][i] = float(np.std(data))
+            
+            if len(mpu_gyro[i]) >= window_size:
+                data = mpu_gyro[i][-window_size:]
+                stats_dict['mpu_gyro_mean'][i] = float(np.mean(data))
+                stats_dict['mpu_gyro_std'][i] = float(np.std(data))
+        
+        if len(gravity) >= window_size:
+            data = gravity[-window_size:]
+            stats_dict['gravity_mean'] = float(np.mean(data))
+            stats_dict['gravity_std'] = float(np.std(data))
+        
+        return stats_dict
+    
+    def _get_empty_chart_stats(self) -> dict:
+        """返回空的图表统计信息"""
+        return {
+            'window_size': 0,
+            'mpu_accel_mean': [0.0, 0.0, 0.0],
+            'mpu_accel_std': [0.0, 0.0, 0.0],
+            'adxl_accel_mean': [0.0, 0.0, 0.0],
+            'adxl_accel_std': [0.0, 0.0, 0.0],
+            'mpu_gyro_mean': [0.0, 0.0, 0.0],
+            'mpu_gyro_std': [0.0, 0.0, 0.0],
+            'gravity_mean': 0.0,
+            'gravity_std': 0.0,
+        }
 
     def send_ss0_start_stream(self):
         """发送 SS:0 指令 - 开始数据流"""
@@ -1453,6 +1535,10 @@ class SensorCalibratorApp:
         self.log_message(f"DEBUG: Full device_info keys: {list(device_info.keys())}")
         self.log_message(f"DEBUG: Full device_info content:\n{json.dumps(device_info, indent=2)}")
         
+        # 保存到 self.sensor_properties，以便后续检测使用
+        self.sensor_properties = device_info
+        self.log_message(f"DEBUG: Saved device_info to sensor_properties")
+        
         # SS:13 返回的数据优先从 "sys" 字段中获取（校准参数在这里）
         # 如果 "sys" 不存在，则尝试 "params" 字段
         if "sys" in device_info:
@@ -1514,9 +1600,9 @@ class SensorCalibratorApp:
         # 检查并显示校准状态 - 直接传入 device_info
         try:
             self.log_message("DEBUG: About to check calibration status from _display_device_info", "DEBUG")
-            # 构建完整的 device_info 字典
-            full_device_info = {"sys": sys_info}
-            self.check_and_display_calibration_status(full_device_info)
+            # 永久更新 sensor_properties，确保 Check 按钮使用最新数据
+            self.sensor_properties = {"sys": sys_info}
+            self.check_and_display_calibration_status(self.sensor_properties)
         except Exception as e:
             self.log_message(f"Error checking calibration status: {e}")
             import traceback
@@ -2234,12 +2320,10 @@ class SensorCalibratorApp:
         # 使用传入的参数或 self.sensor_properties
         if device_info is not None:
             self.log_message("DEBUG: Using provided device_info", "DEBUG")
-            is_calibrated = self.is_sensor_calibrated(device_info)
-            # 临时更新 sensor_properties 以便 get_calibration_quality 使用
-            old_properties = self.sensor_properties
+            # 永久更新 sensor_properties，确保后续 Check 按钮使用最新数据
             self.sensor_properties = device_info
+            is_calibrated = self.is_sensor_calibrated()
             quality = self.get_calibration_quality()
-            self.sensor_properties = old_properties
         else:
             self.log_message("DEBUG: Using self.sensor_properties", "DEBUG")
             is_calibrated = self.is_sensor_calibrated()
@@ -2447,7 +2531,33 @@ class SensorCalibratorApp:
 
     def enable_config_buttons(self):
         """启用配置按钮"""
-        self.log_message("Config buttons enabled")
+        # WiFi 配置按钮
+        if hasattr(self, 'set_wifi_btn') and self.set_wifi_btn:
+            self.set_wifi_btn.config(state="normal")
+        if hasattr(self, 'read_wifi_btn') and self.read_wifi_btn:
+            self.read_wifi_btn.config(state="normal")
+        
+        # MQTT 配置按钮
+        if hasattr(self, 'set_mqtt_btn') and self.set_mqtt_btn:
+            self.set_mqtt_btn.config(state="normal")
+        if hasattr(self, 'read_mqtt_btn') and self.read_mqtt_btn:
+            self.read_mqtt_btn.config(state="normal")
+        
+        # OTA 配置按钮
+        if hasattr(self, 'set_ota_btn') and self.set_ota_btn:
+            self.set_ota_btn.config(state="normal")
+        if hasattr(self, 'read_ota_btn') and self.read_ota_btn:
+            self.read_ota_btn.config(state="normal")
+        
+        # 报警阈值和设备控制按钮
+        if hasattr(self, 'set_alarm_threshold_btn') and self.set_alarm_threshold_btn:
+            self.set_alarm_threshold_btn.config(state="normal")
+        if hasattr(self, 'save_config_btn') and self.save_config_btn:
+            self.save_config_btn.config(state="normal")
+        if hasattr(self, 'restart_sensor_btn') and self.restart_sensor_btn:
+            self.restart_sensor_btn.config(state="normal")
+        
+        self.log_message("Network & Device config buttons enabled")
 
     def reset_calibration_state(self):
         """重置校准状态"""
@@ -2468,6 +2578,7 @@ class SensorCalibratorApp:
         重置UI到初始状态
         
         清空所有数据、图表、统计信息，重置UI变量到初始值
+        重置所有按钮状态
         """
         # 1. 清空数据缓冲区
         if hasattr(self, 'data_processor'):
@@ -2498,7 +2609,84 @@ class SensorCalibratorApp:
         self.serial_freq = 0
         self._aky_from_ss13 = None
         
+        # 8. 重置按钮状态
+        self._reset_button_states()
+        
         self.log_message("UI 已重置")
+    
+    def _reset_button_states(self):
+        """
+        重置所有按钮状态
+        
+        - Connect 按钮：根据实际连接状态设置
+        - 其他按钮：重置为初始状态（禁用）
+        """
+        # Connect 按钮：根据实际连接状态
+        if self.connect_btn:
+            if hasattr(self, 'serial_manager') and self.serial_manager.is_connected:
+                self.connect_btn.config(text="Disconnect")
+            else:
+                self.connect_btn.config(text="Connect")
+        
+        # Data Stream 按钮
+        if self.data_btn:
+            self.data_btn.config(text="Start Data Stream", state="disabled")
+        if self.data_btn2:
+            self.data_btn2.config(text="Start NormalData", state="disabled")
+        
+        # 校准按钮
+        if self.calibrate_btn:
+            self.calibrate_btn.config(state="disabled")
+        if self.capture_btn:
+            self.capture_btn.config(state="disabled")
+        
+        # 命令按钮
+        if self.send_btn:
+            self.send_btn.config(state="disabled")
+        if self.save_btn:
+            self.save_btn.config(state="disabled")
+        if self.resend_btn:
+            self.resend_btn.config(state="disabled")
+        
+        # 读取按钮
+        if self.read_props_btn:
+            self.read_props_btn.config(state="disabled")
+        if self.read_device_btn:
+            self.read_device_btn.config(state="disabled")
+        
+        # 坐标模式按钮
+        if self.local_coord_btn:
+            self.local_coord_btn.config(state="disabled")
+        if self.global_coord_btn:
+            self.global_coord_btn.config(state="disabled")
+        
+        # 激活按钮
+        if hasattr(self, 'activate_btn') and self.activate_btn:
+            self.activate_btn.config(state="disabled")
+        if hasattr(self, 'verify_btn') and self.verify_btn:
+            self.verify_btn.config(state="disabled")
+        
+        # 网络配置按钮
+        if hasattr(self, 'set_wifi_btn') and self.set_wifi_btn:
+            self.set_wifi_btn.config(state="disabled")
+        if hasattr(self, 'read_wifi_btn') and self.read_wifi_btn:
+            self.read_wifi_btn.config(state="disabled")
+        if hasattr(self, 'set_mqtt_btn') and self.set_mqtt_btn:
+            self.set_mqtt_btn.config(state="disabled")
+        if hasattr(self, 'read_mqtt_btn') and self.read_mqtt_btn:
+            self.read_mqtt_btn.config(state="disabled")
+        if hasattr(self, 'set_ota_btn') and self.set_ota_btn:
+            self.set_ota_btn.config(state="disabled")
+        if hasattr(self, 'read_ota_btn') and self.read_ota_btn:
+            self.read_ota_btn.config(state="disabled")
+        
+        # 报警和设备控制按钮
+        if hasattr(self, 'set_alarm_threshold_btn') and self.set_alarm_threshold_btn:
+            self.set_alarm_threshold_btn.config(state="disabled")
+        if hasattr(self, 'save_config_btn') and self.save_config_btn:
+            self.save_config_btn.config(state="disabled")
+        if hasattr(self, 'restart_sensor_btn') and self.restart_sensor_btn:
+            self.restart_sensor_btn.config(state="disabled")
 
     def _reset_statistics_display(self):
         """重置统计标签显示为初始值"""
@@ -2555,8 +2743,6 @@ class SensorCalibratorApp:
         Returns:
             bool: 用户是否点击了确定
         """
-        from tkinter import messagebox
-        
         result = messagebox.askokcancel(
             "确认重置 UI",
             "刷新页面将清空以下数据：\n"
@@ -2594,20 +2780,33 @@ class SensorCalibratorApp:
 
     def _show_device_disconnected_dialog(self):
         """显示设备断开连接提示框"""
-        from tkinter import messagebox
-        
         # 先停止数据流
         if self.is_reading:
             self.is_reading = False
-            self.serial_manager.stop_reading()
+            if self.serial_manager:
+                self.serial_manager.stop_reading()
+        
+        # 清空串口缓冲区（COM口数据）
+        if self.serial_manager and self.serial_manager.serial_port:
+            try:
+                self.serial_manager.serial_port.reset_input_buffer()
+                self.serial_manager.serial_port.reset_output_buffer()
+                self.log_message("COM port buffers cleared")
+            except Exception as e:
+                self.log_message(f"Failed to clear COM port buffers: {e}", "DEBUG")
         
         # 显示信息提示框
-        messagebox.showinfo(
-            "设备已断开连接",
-            "检测到设备已断开连接（USB可能被拔出）。\n\n"
-            "点击确定后将重置UI界面。",
-            icon='warning'
-        )
+        try:
+            messagebox.showinfo(
+                "设备已断开连接",
+                "检测到设备已断开连接（USB可能被拔出）。\n\n"
+                "点击确定后将重置UI界面。",
+                icon='warning',
+                parent=self.root if self.root else None
+            )
+        except Exception:
+            # 在测试环境中可能没有 root 窗口，忽略错误
+            pass
         
         # 用户点击确定后执行重置
         self.reset_ui_state()

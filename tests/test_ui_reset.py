@@ -131,30 +131,28 @@ class TestUIReset:
         mock_app.cmd_text.delete.assert_called_once_with(1.0, "end")
     
     def test_reset_ui_resets_activation(self, mocker):
-        """测试重置UI重置激活状态"""
+        """测试 _reset_activation_display 正确重置激活状态"""
         mock_app = mocker.MagicMock()
-        mock_app.stats_labels = {}
-        mock_app.freq_var = mocker.MagicMock()
-        mock_app.position_var = mocker.MagicMock()
-        mock_app.cmd_text = mocker.MagicMock()
         mock_app.mac_var = mocker.MagicMock()
         mock_app.key_var = mocker.MagicMock()
         mock_app.activation_status_var = mocker.MagicMock()
         mock_app.activation_status_label = mocker.MagicMock()
-        mock_app.chart_manager = mocker.MagicMock()
-        mock_app.root = mocker.MagicMock()
+        mock_app.calibration_status_var = mocker.MagicMock()
+        mock_app.calibration_status_label = mocker.MagicMock()
         
         # 设置初始值
+        mock_app.sensor_properties = {"test": "data"}
         mock_app.mac_address = "AA:BB:CC:DD:EE:FF"
         mock_app.generated_key = "some_key"
         mock_app.sensor_activated = True
         
         from sensor_calibrator.app.application import SensorCalibratorApp
         
-        # 调用重置方法
-        SensorCalibratorApp.reset_ui_state(mock_app)
+        # 直接测试 _reset_activation_display 方法
+        SensorCalibratorApp._reset_activation_display(mock_app)
         
         # 验证激活状态被重置
+        assert mock_app.sensor_properties == {}
         assert mock_app.mac_address is None
         assert mock_app.generated_key is None
         assert mock_app.sensor_activated is False

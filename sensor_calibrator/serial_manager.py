@@ -45,9 +45,11 @@ class SerialManager:
         # 状态标志
         self._is_connected = False
         self._is_reading = False
+        self._user_disconnect = False  # 标记是否为用户主动断开
         
-        # 读取线程
+        # 线程
         self._serial_thread: Optional[threading.Thread] = None
+        self._monitor_thread: Optional[threading.Thread] = None  # 连接监控线程
         
         # 统计数据
         self._packets_received = 0
@@ -117,7 +119,11 @@ class SerialManager:
             self._ser.reset_output_buffer()
             
             self._is_connected = True
+            self._user_disconnect = False  # 重置用户断开标志
             self._log_message(f"Connected to {port} at {baudrate} baud")
+            
+            # 启动连接监控线程
+            self._start_connection_monitor()
             
             # 通知连接状态变化
             if self.callbacks.get('update_connection_state') is not None:
@@ -133,7 +139,13 @@ class SerialManager:
     
     def disconnect(self) -> None:
         """断开串口连接"""
-        # 先停止数据流
+        # 标记为用户主动断开
+        self._user_disconnect = True
+        
+        # 先停止监控线程
+        self._stop_connection_monitor()
+        
+        # 停止数据流
         if self._is_reading:
             self.stop_reading()
         
@@ -148,9 +160,9 @@ class SerialManager:
         self._is_connected = False
         self._log_message("Disconnected from serial port")
         
-        # 通知连接状态变化
+        # 通知连接状态变化（用户主动断开）
         if self.callbacks.get('update_connection_state') is not None:
-            self.callbacks['update_connection_state'](False)
+            self.callbacks['update_connection_state'](False, user_initiated=True)
     
     def toggle_connection(self, port: str, baudrate: int) -> bool:
         """
@@ -242,12 +254,18 @@ class SerialManager:
         - 使用RingBuffer替代Queue，满时单操作覆盖
         - 减少锁竞争
         - 批量处理行数据
+        - 主动连接健康检查（检测USB断开等异常情况）
         """
+        import time
         buffer = ""
         data_queue = self.callbacks.get('get_data_queue', lambda: None)()
         
         # 使用RingBuffer或QueueAdapter更高效（它们支持put_batch）
         use_ring_buffer = isinstance(data_queue, (RingBuffer, QueueAdapter))
+        
+        # 记录时间戳用于健康检查
+        last_data_time = time.time()
+        last_health_check = time.time()
         
         while self._is_reading and self.is_connected:
             try:
@@ -277,6 +295,8 @@ class SerialManager:
                     
                     # 批量放入队列
                     if data_queue and valid_lines:
+                        # 更新上次收到数据的时间
+                        last_data_time = time.time()
                         if use_ring_buffer:
                             # RingBuffer：批量放入更高效
                             data_queue.put_batch(valid_lines)
@@ -315,6 +335,23 @@ class SerialManager:
                 # 检查连接状态
                 if not self.is_connected:
                     break
+                
+                # 主动连接健康检查（用于检测USB断开等异常情况）
+                current_time = time.time()
+                time_since_last_data = current_time - last_data_time
+                
+                # 如果超过健康检查间隔没有收到数据，执行健康检查
+                if time_since_last_data > SerialConfig.HEALTH_CHECK_INTERVAL:
+                    if current_time - last_health_check > SerialConfig.HEALTH_CHECK_INTERVAL:
+                        last_health_check = current_time
+                        if not self._check_connection_health():
+                            self._log_message("Connection health check failed, device may be disconnected", "ERROR")
+                            break
+                
+                # 如果超过无数据超时时间，认为连接已断开
+                if time_since_last_data > SerialConfig.NO_DATA_TIMEOUT:
+                    self._log_message(f"No data received for {SerialConfig.NO_DATA_TIMEOUT}s, assuming disconnected", "ERROR")
+                    break
                     
             except serial.SerialException as e:
                 self._consecutive_errors += 1
@@ -330,10 +367,120 @@ class SerialManager:
                     break
                 time.sleep(Config.PARSE_RETRY_DELAY)
         
-        # 如果因为错误退出，确保状态正确
+        # 检查是否因为错误/异常退出（不是用户正常停止）
+        # 当用户正常 stop_reading() 时，_is_reading 会在 join 前被设为 False
+        # 如果到这里 _is_reading 仍为 True，说明是异常退出
         if self._is_reading:
             self._log_message("Serial reading thread exited unexpectedly", "WARNING")
             self._is_reading = False
+            
+            # 如果是异常退出且不是用户主动断开，通知 UI 层
+            if not self._user_disconnect and (self._ser is not None or self._is_connected):
+                self._log_message("Serial connection lost unexpectedly", "ERROR")
+                self._is_connected = False
+                self._ser = None
+                if self.callbacks.get('update_connection_state') is not None:
+                    self.callbacks['update_connection_state'](False, user_initiated=False)
+    
+    def _check_connection_health(self) -> bool:
+        """
+        检查串口连接健康状态
+        
+        通过尝试访问串口属性来检测连接是否实际可用。
+        当 USB 设备被拔出时，这个检查会失败。
+        
+        Returns:
+            bool: 连接健康返回 True，否则返回 False
+        """
+        if self._ser is None:
+            return False
+        
+        try:
+            # 尝试读取输入缓冲区的字节数
+            # 如果设备已断开，这会抛出 SerialException 或 OSError
+            _ = self._ser.in_waiting
+            return True
+        except (serial.SerialException, OSError) as e:
+            self._log_message(f"Connection health check failed: {e}", "DEBUG")
+            return False
+        except Exception as e:
+            self._log_message(f"Unexpected error in health check: {e}", "DEBUG")
+            return False
+    
+    # ==================== 连接监控线程 ====================
+    
+    def _start_connection_monitor(self) -> None:
+        """
+        启动连接监控线程
+        
+        该线程独立运行，用于检测 USB 设备意外断开。
+        无论是否开启数据流，只要连接了就启动监控。
+        """
+        if self._monitor_thread is not None and self._monitor_thread.is_alive():
+            return  # 已经在运行
+        
+        self._monitor_running = True
+        self._monitor_thread = threading.Thread(
+            target=self._connection_monitor_loop,
+            daemon=True,
+            name="ConnectionMonitor"
+        )
+        self._monitor_thread.start()
+        self._log_message("Connection monitor started")
+    
+    def _stop_connection_monitor(self) -> None:
+        """停止连接监控线程"""
+        self._monitor_running = False
+        if self._monitor_thread and self._monitor_thread.is_alive():
+            self._monitor_thread.join(timeout=1.0)
+        self._monitor_thread = None
+    
+    def _connection_monitor_loop(self) -> None:
+        """
+        连接监控循环
+        
+        定期检查串口连接状态，检测到断开时触发回调。
+        这个线程只要连接了就运行，与数据流无关。
+        """
+        while self._monitor_running and self.is_connected:
+            try:
+                # 执行健康检查
+                if not self._check_connection_health():
+                    self._log_message("Connection monitor detected disconnection", "ERROR")
+                    # 触发断开处理
+                    if not self._user_disconnect:
+                        self._handle_unexpected_disconnect()
+                    break
+                
+                # 休眠一段时间再检查
+                time.sleep(SerialConfig.HEALTH_CHECK_INTERVAL)
+                
+            except Exception as e:
+                self._log_message(f"Error in connection monitor: {e}", "DEBUG")
+                time.sleep(1.0)
+        
+        self._log_message("Connection monitor stopped")
+    
+    def _handle_unexpected_disconnect(self) -> None:
+        """处理意外断开连接"""
+        self._log_message("Handling unexpected disconnection", "ERROR")
+        
+        # 停止读取线程（如果正在运行）
+        if self._is_reading:
+            self._is_reading = False
+        
+        # 清理状态
+        self._is_connected = False
+        try:
+            if self._ser and self._ser.is_open:
+                self._ser.close()
+        except:
+            pass
+        self._ser = None
+        
+        # 通知 UI 层
+        if self.callbacks.get('update_connection_state') is not None:
+            self.callbacks['update_connection_state'](False, user_initiated=False)
     
     # ==================== SS 命令 ====================
     
