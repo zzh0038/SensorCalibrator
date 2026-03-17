@@ -1,506 +1,659 @@
 # SensorCalibrator 性能优化实施计划
 
-**Generated**: 2026-03-03  
-**Estimated Complexity**: Medium  
-**Estimated Duration**: 2-3 天  
-**Risk Level**: Low (有完整回滚方案)
+**生成日期**: 2026-03-17
+**预计复杂度**: 中等
+**预计工期**: 2-3 天
+
+## 概述
+
+本计划针对 SensorCalibrator 项目的性能瓶颈进行系统性优化，分为 5 个阶段实施。每个阶段都是独立的，可以单独测试和回滚。
+
+**核心优化目标**:
+- 数据解析速度提升 2-5x
+- 减少内存分配和 GC 压力
+- 降低锁竞争，提高并发性能
+- 整体 UI 响应性提升
 
 ---
 
-## Overview
+## 前置条件
 
-本计划针对 SensorCalibrator 项目的 6 项性能瓶颈实施渐进式优化。采用**分阶段实施、独立测试、随时回滚**的策略，确保每次优化都能独立验证，不影响现有功能。
-
-### 优化项汇总
-
-| 优先级 | 优化项 | 目标文件 | 预期收益 |
-|-------|-------|---------|---------|
-| 🔴 P0 | data_buffer.py 改用 deque | `sensor_calibrator/data_buffer.py` | 减少 30% 内存分配 |
-| 🔴 P0 | 统计计算避免 list 转换 | `sensor_calibrator/data_processor.py` | 减少 20% CPU 占用 |
-| 🟡 P1 | Y 轴范围计算优化 | `sensor_calibrator/chart_manager.py` | 减少 10% 渲染时间 |
-| 🟡 P1 | 队列竞争优化 | `sensor_calibrator/serial_manager.py` | 减少 15% 线程开销 |
-| 🟢 P2 | 日志限流机制 | `StableSensorCalibrator.py` | 改善 UI 响应性 |
-| 🟢 P2 | 主程序模块化拆分 | `sensor_calibrator/ui/` 新目录 | 改善可维护性 |
+- [ ] 项目可以正常编译运行
+- [ ] 有性能基准测试数据（建议先运行 `python -m cProfile -o profile.stats main.py` 采集基线）
+- [ ] 所有测试用例通过
+- [ ] 创建 feature/performance-optimization 分支
 
 ---
 
-## Prerequisites
+## Phase 1: 快速收益优化 (1-2 小时)
 
-### 环境准备
-- [ ] Python 3.8+ 环境
-- [ ] 现有测试用例通过：`python -m pytest tests/ -v`
-- [ ] 备份当前代码：`git stash` 或 `git branch backup-before-optimization`
-- [ ] 确保 `performance_profile.py` 可正常运行
+**目标**: 实施成本低、收益高的优化项
+**验证**: 解析和数据处理速度明显提升
 
-### 基准测试数据
-```bash
-# 运行前记录基准性能
-python performance_profile.py > baseline_performance.txt
-```
+### Task 1.1: 替换 np.sqrt 为 math.sqrt
+**文件**: `sensor_calibrator/data_processor.py`
+**依赖**: 无
+**描述**: 
+- 在 `process_packet` 方法中，将 `np.sqrt()` 替换为 `math.sqrt()`
+- 导入 `math` 模块
 
----
-
-## Sprint 1: 数据缓冲区优化 (P0)
-
-**Goal**: 将 `SensorDataBuffer` 从 list 改为 deque，消除频繁切片造成的内存分配
-
-**Demo/Validation**:
-- 运行 `test_data_buffer.py` 测试用例通过
-- 内存分析显示切片操作减少
-- 长时间运行（模拟 1 小时数据）内存稳定
-
----
-
-### Task 1.1: 修改数据存储结构
-- **Location**: `sensor_calibrator/data_buffer.py`
-- **Description**: 将所有 list 类型的数据存储改为 deque
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  - `_time_data`, `_mpu_accel_data`, `_mpu_gyro_data`, `_adxl_accel_data`, `_gravity_mag_data` 全部使用 deque
-  - `maxlen` 参数正确设置
-  - 删除 `_enforce_size_limit()` 方法（deque 自动处理）
-- **Validation**:
-  ```bash
-  python -m pytest tests/test_data_processor.py -v -k buffer
-  ```
-
-**代码变更预览**:
+**修改代码**:
 ```python
-# 修改前
-self._time_data: List[float] = []
-# ...
-def _enforce_size_limit(self) -> None:
-    # 复杂的切片逻辑
+# 修改前 (line 126-128)
+gravity_mag = np.sqrt(
+    mpu_accel[0] ** 2 + mpu_accel[1] ** 2 + mpu_accel[2] ** 2
+)
 
 # 修改后
-self._time_data: deque[float] = deque(maxlen=self._max_points)
-# 无需 _enforce_size_limit，deque 自动丢弃旧数据
+import math
+gravity_mag = math.sqrt(
+    mpu_accel[0] ** 2 + mpu_accel[1] ** 2 + mpu_accel[2] ** 2
+)
+```
+
+**验收标准**:
+- [ ] `math` 模块已导入
+- [ ] `np.sqrt` 不再在标量计算中使用
+- [ ] 所有测试通过
+
+**验证方法**:
+```python
+import timeit
+# 对比两种方法的性能
+timeit.timeit('np.sqrt(1**2 + 2**2 + 3**2)', globals={'np': np})
+timeit.timeit('math.sqrt(1**2 + 2**2 + 3**2)', globals={'math': math})
 ```
 
 ---
 
-### Task 1.2: 更新数据访问属性
-- **Location**: `sensor_calibrator/data_buffer.py` (lines 98-126)
-- **Description**: 修改 property 方法以正确处理 deque 类型
-- **Dependencies**: Task 1.1
-- **Acceptance Criteria**:
-  - `time_data`, `mpu_accel_data` 等属性正确返回 list 副本（向后兼容）
-  - `get_latest()` 方法正常工作
-  - 线程锁逻辑保持不变
-- **Validation**:
-  ```python
-  # 手动测试
-  from sensor_calibrator.data_buffer import SensorDataBuffer
-  buf = SensorDataBuffer()
-  for i in range(3000):  # 超过 maxlen
-      buf.add_sample(i, (1,2,3), (4,5,6), (7,8,9), 10.0)
-  assert len(buf.time_data) == 2000  # 保持 maxlen
-  ```
+### Task 1.2: 优化数据解析函数
+**文件**: `sensor_calibrator/data_buffer.py`, `sensor_calibrator/data_processor.py`
+**依赖**: 无
+**描述**:
+- 将 `parse_sensor_data` 中的循环解析改为列表推导式
+- 使用 `partition` 或 `split` 优化
 
----
-
-### Task 1.3: 更新统计计算方法
-- **Location**: `sensor_calibrator/data_buffer.py` (lines 155-216)
-- **Description**: 优化 `calculate_statistics` 以高效处理 deque
-- **Dependencies**: Task 1.2
-- **Acceptance Criteria**:
-  - 统计计算无需将 deque 转换为 list
-  - 使用 `itertools.islice` 获取窗口数据
-  - numpy 计算结果正确
-- **Validation**:
-  ```bash
-  python -c "
-  from sensor_calibrator.data_buffer import SensorDataBuffer
-  import time
-  buf = SensorDataBuffer()
-  for i in range(1000):
-      buf.add_sample(i, (1,2,3), (4,5,6), (7,8,9), 10.0)
-  start = time.perf_counter()
-  stats = buf.calculate_statistics()
-  print(f'Statistics calculation: {(time.perf_counter()-start)*1000:.2f} ms')
-  "
-  ```
-
----
-
-## Sprint 2: 统计计算优化 (P0)
-
-**Goal**: 消除 `calculate_statistics` 中的重复类型转换
-
-**Demo/Validation**:
-- `DataProcessor.calculate_statistics()` 性能提升 > 20%
-- 测试用例全部通过
-- 内存分配监控显示无冗余 list 创建
-
----
-
-### Task 2.1: 优化 calculate_statistics 方法
-- **Location**: `sensor_calibrator/data_processor.py` (lines 129-166)
-- **Description**: 直接从 deque/slice 计算统计值，避免转换为 list
-- **Dependencies**: Sprint 1 完成（或直接基于当前代码）
-- **Acceptance Criteria**:
-  - 删除 `isinstance(data_array, deque)` 检查
-  - 使用 `np.fromiter()` 或切片视图直接计算
-  - 保持接口不变（向后兼容）
-- **Validation**:
-  ```python
-  # 性能对比测试
-  import timeit
-  # 优化前 vs 优化后
-  ```
-
-**代码变更预览**:
+**修改代码**:
 ```python
-# 修改前
-def calculate_statistics(self, data_array, ...):
-    if isinstance(data_array, deque):
-        data_array = list(data_array)  # 昂贵的复制
-    segment = data_array[start_idx:end_idx]
-    mean_val = float(np.mean(segment))
+# 修改前 (data_buffer.py:436-451)
+parts = data_string.split(",")
+if len(parts) >= 9:
+    values = []
+    for part in parts[:9]:
+        try:
+            values.append(float(part.strip()))
+        except (ValueError, TypeError):
+            values.append(0.0)
 
-# 修改后  
-def calculate_statistics(self, data_array, ...):
-    # 直接处理 deque，避免转换
-    if isinstance(data_array, deque):
-        # 使用切片创建视图而非复制
-        segment = list(itertools.islice(data_array, start_idx, end_idx))
-    else:
-        segment = data_array[start_idx:end_idx]
-    mean_val = float(np.mean(segment))
+# 修改后
+try:
+    parts = data_string.split(",")
+    if len(parts) >= 9:
+        values = [
+            float(part.strip()) if part.strip() else 0.0 
+            for part in parts[:9]
+        ]
+        # 处理转换失败的值
+        values = [v if not isinstance(v, str) else 0.0 for v in values]
+```
+
+**验收标准**:
+- [ ] 解析速度提升 2x 以上
+- [ ] 异常处理保持完整
+- [ ] 所有测试通过
+
+---
+
+## Phase 2: 锁竞争优化 (2-3 小时)
+
+**目标**: 减少 SensorDataBuffer 的锁持有时间
+**验证**: 数据吞吐量和响应延迟改善
+
+### Task 2.1: 分离数据复制和计算
+**文件**: `sensor_calibrator/data_buffer.py`
+**依赖**: Task 1.1, 1.2
+**描述**:
+- 在 `calculate_statistics` 和 `update_statistics` 中，最小化临界区
+- 只在锁内进行数据复制，计算在锁外进行
+
+**修改代码**:
+```python
+# update_statistics 方法 (line 339-379)
+# 修改前: 计算在锁内进行
+with self._lock:
+    # ... 大量计算代码
+
+# 修改后:
+with self._lock:
+    # 只复制数据
+    window_size = min(Config.STATS_WINDOW_SIZE, len(self._time_data))
+    start_idx = len(self._time_data) - window_size
+    
+    mpu_accel_data = [
+        list(itertools.islice(self._mpu_accel_data[i], start_idx, None))
+        for i in range(3)
+    ]
+    # ... 复制其他数据
+
+# 锁外进行计算
+stats = self._get_empty_stats()
+for i in range(3):
+    if len(mpu_accel_data[i]) >= window_size:
+        stats["mpu_accel_mean"][i] = float(np.mean(mpu_accel_data[i]))
+        stats["mpu_accel_std"][i] = float(np.std(mpu_accel_data[i]))
+# ...
+```
+
+**验收标准**:
+- [ ] 锁持有时间减少 80% 以上
+- [ ] 数据一致性保持
+- [ ] 所有测试通过
+
+**验证方法**:
+```python
+# 添加计时装饰器测量锁持有时间
+import time
+from contextlib import contextmanager
+
+@contextmanager
+def timed_lock(lock, name):
+    start = time.perf_counter()
+    lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+        elapsed = (time.perf_counter() - start) * 1000
+        print(f"{name}: {elapsed:.2f}ms")
 ```
 
 ---
 
 ### Task 2.2: 添加统计缓存机制
-- **Location**: `sensor_calibrator/data_processor.py`
-- **Description**: 添加增量统计更新，避免每次都重新计算
-- **Dependencies**: Task 2.1
-- **Acceptance Criteria**:
-  - 新增 `_stats_cache` 和 `_stats_version` 字段
-  - 数据未变化时直接返回缓存结果
-  - 缓存失效逻辑正确（数据追加时）
-- **Validation**:
-  ```bash
-  python -m pytest tests/ -v -k stats
-  ```
+**文件**: `sensor_calibrator/data_buffer.py`
+**依赖**: Task 2.1
+**描述**:
+- 添加缓存机制，避免重复计算相同窗口的统计信息
+- 使用数据版本号或哈希判断是否需要重新计算
 
----
-
-## Sprint 3: 图表渲染优化 (P1)
-
-**Goal**: 优化 Y 轴范围计算，避免重复遍历数据
-
-**Demo/Validation**:
-- 图表更新帧率稳定
-- `adjust_y_limits` 执行时间减少 > 30%
-- 窗口移动时无明显卡顿
-
----
-
-### Task 3.1: 优化 Y 轴范围计算算法
-- **Location**: `sensor_calibrator/chart_manager.py` (lines 444-525)
-- **Description**: 使用生成器表达式替代列表扩展，减少内存分配
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  - 消除 `recent_data.extend()` 导致的列表复制
-  - 使用 `min()`/`max()` 配合生成器直接计算
-  - 处理空数据边界情况
-- **Validation**:
-  ```python
-  # 手动测试 adjust_y_limits 性能
-  import time
-  # 模拟 2000 点数据，测量执行时间
-  ```
-
-**代码变更预览**:
+**修改代码**:
 ```python
-# 修改前 (MPU 加速度计部分)
-recent_data = []
-for i in range(3):
-    if len(mpu_accel[i]) >= recent_points:
-        recent_data.extend(mpu_accel[i][-recent_points:])
-if recent_data:
-    y_min = float(np.min(recent_data))
-    y_max = float(np.max(recent_data))
+class SensorDataBuffer:
+    def __init__(self, max_points: Optional[int] = None) -> None:
+        # ... 现有代码 ...
+        
+        # 新增缓存相关字段
+        self._stats_cache: Dict[str, Any] = {}
+        self._stats_version = 0  # 数据版本号
+        self._stats_cache_version = -1  # 缓存版本号
+    
+    def add_sample(self, ...):
+        with self._lock:
+            # ... 现有代码 ...
+            self._stats_version += 1  # 数据变化时增加版本号
+    
+    def update_statistics(self) -> Dict[str, Any]:
+        # 检查缓存是否有效
+        if self._stats_version == self._stats_cache_version:
+            return self._stats_cache.copy()
+        
+        # ... 计算统计信息 ...
+        
+        # 更新缓存
+        self._stats_cache = stats
+        self._stats_cache_version = self._stats_version
+        return stats.copy()
+```
+
+**验收标准**:
+- [ ] 连续调用 `update_statistics` 返回缓存结果
+- [ ] 数据更新后缓存失效
+- [ ] 所有测试通过
+
+---
+
+## Phase 3: 内存和结构优化 (2-3 小时)
+
+**目标**: 减少内存分配，优化对象结构
+**验证**: 内存占用降低，GC 频率减少
+
+### Task 3.1: 添加 __slots__ 到高频类
+**文件**: 多个文件
+**依赖**: 无
+**描述**:
+- 为高频创建的小型类添加 `__slots__`
+- 重点优化数据相关的类
+
+**文件列表**:
+1. `sensor_calibrator/ring_buffer.py` - `RingBuffer`, `QueueAdapter`
+2. `sensor_calibrator/log_throttler.py` - `LogThrottler`
+
+**修改代码示例**:
+```python
+# ring_buffer.py
+class RingBuffer(Generic[T]):
+    __slots__ = ['_capacity', '_buffer', '_head', '_tail', '_size', '_lock']
+    # ... 其余代码不变
+
+class QueueAdapter:
+    __slots__ = ['_buffer', 'maxsize']
+    # ... 其余代码不变
+```
+
+**验收标准**:
+- [ ] 内存占用减少 30% 以上（可用 `sys.getsizeof` 对比）
+- [ ] 功能保持完整
+- [ ] 所有测试通过
+
+---
+
+### Task 3.2: 优化数据访问属性
+**文件**: `sensor_calibrator/data_buffer.py`
+**依赖**: Task 2.2
+**描述**:
+- 当前每次访问属性都复制整个 deque
+- 添加视图模式，延迟复制
+
+**修改代码**:
+```python
+class SensorDataBuffer:
+    def __init__(self, ...):
+        # ... 现有代码 ...
+        self._view_mode = False
+        self._view_snapshot = None
+    
+    def get_view(self) -> 'DataView':
+        """获取数据视图（不复制数据）"""
+        with self._lock:
+            return DataView(
+                self._time_data,
+                self._mpu_accel_data,
+                self._mpu_gyro_data,
+                self._adxl_accel_data,
+                self._gravity_mag_data,
+                self._lock
+            )
+    
+    # 保留原有 copy 方法用于需要完整副本的场景
+    def get_copy(self) -> Dict[str, Any]:
+        """获取数据的完整副本"""
+        with self._lock:
+            return {
+                'time': list(self._time_data),
+                'mpu_accel': [list(d) for d in self._mpu_accel_data],
+                # ...
+            }
+
+class DataView:
+    """数据视图 - 只读访问，不复制数据"""
+    __slots__ = ['_time', '_mpu_accel', '_mpu_gyro', '_adxl_accel', '_gravity', '_lock']
+    
+    def __init__(self, time_data, mpu_accel, mpu_gyro, adxl_accel, gravity, lock):
+        self._time = time_data
+        self._mpu_accel = mpu_accel
+        self._mpu_gyro = mpu_gyro
+        self._adxl_accel = adxl_accel
+        self._gravity = gravity
+        self._lock = lock
+    
+    def get_latest(self, n: int = 1):
+        with self._lock:
+            return {
+                'time': list(itertools.islice(self._time, max(0, len(self._time) - n), None)),
+                # ...
+            }
+```
+
+**验收标准**:
+- [ ] 添加 `DataView` 类
+- [ ] `get_display_data` 可使用视图模式
+- [ ] 所有测试通过
+
+---
+
+## Phase 4: 批量处理和预分配 (3-4 小时)
+
+**目标**: 优化高频数据处理和校准流程
+**验证**: 批量处理效率提升，校准数据收集更快
+
+### Task 4.1: 实现批量数据处理
+**文件**: `sensor_calibrator/app/application.py`
+**依赖**: Task 1.1, 2.1
+**描述**:
+- 当前 `update_gui` 逐包处理数据
+- 改为批量解析和批量追加
+
+**修改代码**:
+```python
+def update_gui(self):
+    # ... 前置检查 ...
+    
+    if hasattr(self, "data_queue"):
+        # 批量获取数据
+        batch = []
+        while (not self.data_queue.empty() and 
+               len(batch) < Config.MAX_GUI_UPDATE_BATCH):
+            try:
+                batch.append(self.data_queue.get_nowait())
+            except:
+                break
+        
+        if batch:
+            self._process_batch(batch)
+        
+        # ... 后续更新 ...
+
+def _process_batch(self, batch: List[str]):
+    """批量处理数据"""
+    # 批量解析
+    parsed_data = []
+    for data_string in batch:
+        result = self.parse_sensor_data(data_string)
+        if result[0] is not None:  # mpu_accel
+            parsed_data.append(result)
+    
+    if not parsed_data:
+        return
+    
+    # 初始化时间基准（只需一次）
+    if self.data_processor.data_start_time is None:
+        self.data_processor.data_start_time = time.time()
+    
+    # 批量追加到缓冲区（减少锁获取次数）
+    start_time = self.data_processor.packet_count / self.data_processor.expected_frequency
+    
+    with self.data_processor._lock:  # 假设添加批量追加方法
+        for i, (mpu_accel, mpu_gyro, adxl_accel) in enumerate(parsed_data):
+            current_time = start_time + i / self.data_processor.expected_frequency
+            # 直接访问内部 deque，避免重复获取锁
+            self.data_processor._time_data.append(current_time)
+            for j in range(3):
+                self.data_processor._mpu_accel_data[j].append(mpu_accel[j])
+                self.data_processor._mpu_gyro_data[j].append(mpu_gyro[j])
+                self.data_processor._adxl_accel_data[j].append(adxl_accel[j])
+            
+            gravity_mag = math.sqrt(
+                mpu_accel[0]**2 + mpu_accel[1]**2 + mpu_accel[2]**2
+            )
+            self.data_processor._gravity_mag_data.append(gravity_mag)
+    
+    self.data_processor.packet_count += len(parsed_data)
+```
+
+**验收标准**:
+- [ ] 添加 `_process_batch` 方法
+- [ ] 批量处理速度提升 2x 以上
+- [ ] 锁获取次数减少
+- [ ] 所有测试通过
+
+---
+
+### Task 4.2: 预分配校准样本数组
+**文件**: `sensor_calibrator/calibration_workflow.py`
+**依赖**: 无
+**描述**:
+- 当前使用 list 动态扩容存储校准样本
+- 改为预分配 numpy 数组
+
+**修改代码**:
+```python
+def _collect_calibration_data(self, position: int) -> None:
+    """采集校准数据 - 预分配版本"""
+    try:
+        # 预分配数组（避免动态扩容）
+        max_samples = self._calibration_samples
+        mpu_accel_samples = np.zeros((max_samples, 3))
+        mpu_gyro_samples = np.zeros((max_samples, 3))
+        adxl_accel_samples = np.zeros((max_samples, 3))
+        
+        start_time = time.time()
+        samples_collected = 0
+        
+        while (samples_collected < max_samples and self._is_calibrating):
+            try:
+                data_string = self.data_queue.get(timeout=Config.QUICK_SLEEP)
+                
+                if "parse_sensor_data" in self.callbacks:
+                    mpu_accel, mpu_gyro, adxl_accel = self.callbacks[
+                        "parse_sensor_data"
+                    ](data_string)
+                    
+                    if mpu_accel and mpu_gyro and adxl_accel:
+                        mpu_accel_samples[samples_collected] = mpu_accel
+                        mpu_gyro_samples[samples_collected] = mpu_gyro
+                        adxl_accel_samples[samples_collected] = adxl_accel
+                        samples_collected += 1
+                
+                if time.time() - start_time > 10:
+                    self._log_message("Timeout: Stopping data collection")
+                    break
+                    
+            except queue.Empty:
+                time.sleep(Config.QUICK_SLEEP)
+                continue
+            except Exception as e:
+                self._log_message(f"Error collecting calibration data: {e}")
+                continue
+        
+        # 使用切片获取实际收集的样本
+        if samples_collected > 0:
+            mpu_accel_samples = mpu_accel_samples[:samples_collected]
+            mpu_gyro_samples = mpu_gyro_samples[:samples_collected]
+            adxl_accel_samples = adxl_accel_samples[:samples_collected]
+            
+            # 计算平均值（使用 numpy 向量化操作）
+            mpu_accel_avg = np.mean(mpu_accel_samples, axis=0)
+            mpu_gyro_avg = np.mean(mpu_gyro_samples, axis=0)
+            adxl_accel_avg = np.mean(adxl_accel_samples, axis=0)
+            
+            mpu_accel_std = np.std(mpu_accel_samples, axis=0)
+            adxl_accel_std = np.std(adxl_accel_samples, axis=0)
+            
+            # ... 后续处理 ...
+```
+
+**验收标准**:
+- [ ] 预分配数组实现
+- [ ] 校准采集速度提升
+- [ ] 内存分配次数减少
+- [ ] 所有测试通过
+
+---
+
+## Phase 5: 代码清理和回调优化 (1-2 小时)
+
+**目标**: 修复代码异味，优化高频调用路径
+**验证**: 代码简洁，回调调用更快
+
+### Task 5.1: 清理重复导入
+**文件**: `sensor_calibrator/calibration_workflow.py`
+**依赖**: 无
+**描述**:
+- 移除重复的导入语句
+- 简化导入逻辑
+
+**修改代码**:
+```python
+# 修改前 (line 18-32)
+_calibration_functions_available = False
+_import_error_message = None
+
+try:
+    scripts_path = Path(__file__).parent.parent / "scripts"
+    sys.path.insert(0, str(scripts_path))
+    from calibration import compute_six_position_calibration, compute_gyro_offset
+    _calibration_functions_available = True
+except (ImportError, ModuleNotFoundError) as e:
+    _import_error_message = str(e)
+    compute_six_position_calibration = None
+    compute_gyro_offset = None
+scripts_path = Path(__file__).parent.parent / "scripts"
+sys.path.insert(0, str(scripts_path))
+from calibration import compute_six_position_calibration, compute_gyro_offset
 
 # 修改后
-y_min = float('inf')
-y_max = float('-inf')
-for i in range(3):
-    if len(mpu_accel[i]) >= recent_points:
-        ch_min = np.min(mpu_accel[i][-recent_points:])
-        ch_max = np.max(mpu_accel[i][-recent_points:])
-        y_min = min(y_min, ch_min)
-        y_max = max(y_max, ch_max)
-if y_min != float('inf'):
-    # 应用 padding
+try:
+    scripts_path = Path(__file__).parent.parent / "scripts"
+    if str(scripts_path) not in sys.path:
+        sys.path.insert(0, str(scripts_path))
+    from calibration import compute_six_position_calibration, compute_gyro_offset
+    _calibration_functions_available = True
+except (ImportError, ModuleNotFoundError) as e:
+    _import_error_message = str(e)
+    compute_six_position_calibration = None
+    compute_gyro_offset = None
+    _calibration_functions_available = False
 ```
 
----
-
-### Task 3.2: 添加 Y 轴范围缓存
-- **Location**: `sensor_calibrator/chart_manager.py`
-- **Description**: 缓存上次计算的 Y 轴范围，避免频繁重算
-- **Dependencies**: Task 3.1
-- **Acceptance Criteria**:
-  - 新增 `_y_limits_cache` 字典存储各轴范围
-  - 仅当数据范围变化超过阈值时才更新
-  - 与现有 `y_limit_update_interval` 配合工作
-- **Validation**:
-  - 连续调用 `adjust_y_limits` 两次，第二次应使用缓存
+**验收标准**:
+- [ ] 重复导入已移除
+- [ ] 导入逻辑清晰
+- [ ] 所有测试通过
 
 ---
 
-## Sprint 4: 队列竞争优化 (P1)
+### Task 5.2: 缓存回调签名检查结果
+**文件**: `sensor_calibrator/serial_manager.py`
+**依赖**: 无
+**描述**:
+- `_log_message` 每次调用都检查回调签名
+- 缓存检查结果，避免重复 inspect
 
-**Goal**: 优化串口数据队列的并发访问性能
+**修改代码**:
+```python
+def __init__(self, callbacks: dict):
+    # ... 现有代码 ...
+    
+    # 新增：缓存回调签名检查结果
+    self._callback_signatures: Dict[str, Any] = {}
+    self._check_callback_signatures()
 
-**Demo/Validation**:
-- 高频数据流（>100Hz）下无丢包
-- CPU 占用降低
-- 串口读取线程稳定运行
+def _check_callback_signatures(self):
+    """预检查所有回调函数的签名"""
+    import inspect
+    
+    for name, callback in self.callbacks.items():
+        if callable(callback):
+            sig = inspect.signature(callback)
+            param_count = len([
+                p for p in sig.parameters.values()
+                if p.default is inspect.Parameter.empty 
+                or p.default != inspect.Parameter.empty
+            ])
+            self._callback_signatures[name] = param_count
 
----
+def _log_message(self, message: str, level: str = "INFO") -> None:
+    """记录日志（通过回调）- 优化版本"""
+    if self.callbacks.get('log_message') is not None:
+        callback = self.callbacks['log_message']
+        param_count = self._callback_signatures.get('log_message', 1)
+        
+        if level != "INFO" and param_count >= 2:
+            callback(message, level)
+        else:
+            callback(message)
+```
 
-### Task 4.1: 实现环形缓冲区替代 Queue
-- **Location**: 新建 `sensor_calibrator/ring_buffer.py`
-- **Description**: 创建无锁（或更少锁）的环形缓冲区
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  - 实现 `RingBuffer` 类，支持 `put()`, `get()`, `full()`, `empty()`
-  - 使用 `threading.Lock` 但减少临界区大小
-  - 满时自动覆盖最旧数据（无需 pop+put 两次操作）
-- **Validation**:
-  ```bash
-  python -m pytest tests/test_ring_buffer.py -v  # 需新建测试
-  ```
-
----
-
-### Task 4.2: 集成 RingBuffer 到 SerialManager
-- **Location**: `sensor_calibrator/serial_manager.py`
-- **Description**: 用 RingBuffer 替换 queue.Queue
-- **Dependencies**: Task 4.1
-- **Acceptance Criteria**:
-  - `_read_serial_data()` 使用新缓冲区
-  - 回调接口保持不变
-  - 满队列处理逻辑正确（自动覆盖）
-- **Validation**:
-  - 运行完整数据采集测试，验证无丢包
-
----
-
-## Sprint 5: 日志限流机制 (P2)
-
-**Goal**: 防止高频日志输出导致 UI 卡顿
-
-**Demo/Validation**:
-- 数据流全速运行时 UI 响应流畅
-- 日志输出频率受控（< 10 条/秒）
-- 重要日志不丢失
-
----
-
-### Task 5.1: 实现日志限流器
-- **Location**: 新建 `sensor_calibrator/log_throttler.py`
-- **Description**: 创建带缓冲和批量输出的日志限流器
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  - `LogThrottler` 类支持时间窗口限流
-  - 缓冲非紧急日志，定期批量输出
-  - 错误级别日志立即输出（不过滤）
-- **Validation**:
-  ```python
-  throttler = LogThrottler(interval_ms=100)
-  for i in range(100):
-      throttler.log(f"Message {i}")  # 应只输出约 10 次批量日志
-  ```
+**验收标准**:
+- [ ] 签名检查只执行一次
+- [ ] `_log_message` 调用性能提升
+- [ ] 所有测试通过
 
 ---
 
-### Task 5.2: 集成到主程序
-- **Location**: `StableSensorCalibrator.py`
-- **Description**: 在 `log_message()` 方法中集成限流器
-- **Dependencies**: Task 5.1
-- **Acceptance Criteria**:
-  - 普通信息日志受限于流控制
-  - 错误和警告日志优先输出
-  - 日志区域更新频率降低
-- **Validation**:
-  - 启动数据流，观察日志输出频率
-  - 测量 UI 响应延迟
+## 测试策略
 
----
+### 每阶段验证清单
 
-## Sprint 6: 主程序模块化拆分 (P2)
-
-**Goal**: 将 `StableSensorCalibrator.py` 拆分为更小的模块
-
-**Demo/Validation**:
-- 主程序行数从 2000+ 减少到 < 500
-- 所有现有功能正常工作
-- 新结构易于扩展和维护
-
----
-
-### Task 6.1: 创建 UI 组件包结构
-- **Location**: 新建 `sensor_calibrator/ui/`
-- **Description**: 创建 UI 组件目录结构
-- **Dependencies**: 无
-- **Acceptance Criteria**:
-  ```
-  sensor_calibrator/ui/
-  ├── __init__.py
-  ├── control_panel.py      # 左侧控制面板
-  ├── chart_panel.py        # 右侧图表区域
-  ├── log_panel.py          # 日志区域
-  └── menu_bar.py           # 菜单栏
-  ```
-- **Validation**:
-  - 目录结构创建正确
-  - `__init__.py` 导出所有组件
-
----
-
-### Task 6.2: 迁移控制面板代码
-- **Location**: `sensor_calibrator/ui/control_panel.py`
-- **Description**: 提取左侧控制面板相关代码
-- **Dependencies**: Task 6.1
-- **Acceptance Criteria**:
-  - 串口控制、校准按钮、网络配置等 UI 组件迁移完成
-  - 事件回调通过接口传递
-  - 原始代码中保留向后兼容的导入
-- **Validation**:
-  ```bash
-  python -c "from sensor_calibrator.ui.control_panel import ControlPanel; print('OK')"
-  ```
-
----
-
-### Task 6.3: 重构主程序使用新模块
-- **Location**: `StableSensorCalibrator.py`
-- **Description**: 精简主程序，使用新 UI 组件
-- **Dependencies**: Task 6.2
-- **Acceptance Criteria**:
-  - 主程序仅保留协调逻辑
-  - UI 创建委托给各组件
-  - 所有测试通过
-- **Validation**:
-  ```bash
-  python -m pytest tests/ -v
-  python StableSensorCalibrator.py  # 手动验证 GUI 正常
-  ```
-
----
-
-## Testing Strategy
-
-### 单元测试
-每个 Sprint 完成后运行：
+1. **单元测试**:
 ```bash
-python -m pytest tests/ -v --tb=short
+python -m pytest tests/ -v
 ```
 
-### 性能测试
+2. **性能基准**:
 ```bash
-# Sprint 1-2 后
-python performance_profile.py
+# 基线测试
+python -m cProfile -o baseline.prof main.py
 
-# Sprint 3-4 后  
-python -c "
-import cProfile
-import pstats
-from sensor_calibrator import ChartManager, DataProcessor
-# 性能测试代码
-"
+# 优化后测试
+python -m cProfile -o optimized.prof main.py
+
+# 对比分析
+python -m pstats baseline.prof
+# 在 pstats 中: sort cumtime, stats 20
 ```
 
-### 集成测试
+3. **内存分析**:
 ```bash
-# 完整功能测试
-python -m pytest tests/test_integration.py -v
+python -m memory_profiler sensor_calibrator/data_buffer.py
+```
 
-# 长时间运行测试（模拟 1 小时）
-python tests/test_long_running.py
+### 集成测试场景
+
+1. 长时间运行测试（30分钟）
+2. 高频数据采集测试（100Hz）
+3. 校准流程完整测试
+4. 内存泄漏检测
+
+---
+
+## 潜在风险和注意事项
+
+### 风险 1: 锁优化引入竞态条件
+**缓解措施**:
+- 严格测试多线程场景
+- 使用 `threading.Lock` 的上下文管理器
+- 添加断言验证数据一致性
+
+### 风险 2: 缓存机制导致数据不一致
+**缓解措施**:
+- 版本号机制确保缓存失效
+- 提供强制刷新接口
+- 添加缓存命中率监控
+
+### 风险 3: __slots__ 限制属性动态添加
+**缓解措施**:
+- 检查是否有动态添加属性的代码
+- 保留 `__dict__` 备用方案
+- 充分测试所有代码路径
+
+### 风险 4: 批量处理增加延迟
+**缓解措施**:
+- 设置批量大小上限
+- 添加超时机制
+- 保留逐包处理回退方案
+
+---
+
+## 回滚计划
+
+每个 Phase 都是独立的 Git commit，可以单独回滚：
+
+```bash
+# 回滚 Phase 4
+git revert <phase-4-commit-hash>
+
+# 回滚所有优化
+git checkout main
 ```
 
 ---
 
-## Potential Risks & Gotchas
+## 实施建议
 
-| 风险 | 影响 | 缓解措施 |
-|-----|------|---------|
-| deque 修改后索引访问行为变化 | 高 | 全面测试 `get_latest()` 和切片操作 |
-| RingBuffer 引入新并发 Bug | 中 | 增加压力测试，模拟高频数据流 |
-| UI 模块化破坏现有回调 | 中 | 保持原方法名，仅内部委托 |
-| 性能优化导致精度损失 | 低 | 对比优化前后计算结果 |
-| 向后兼容性破坏 | 中 | 每个 Sprint 后运行完整测试套件 |
-
-### 特别注意
-
-1. **deque 切片行为**: `deque` 不支持 `[-n:]` 切片，需使用 `itertools.islice`
-2. **线程安全**: RingBuffer 的实现必须正确处理竞态条件
-3. **内存监控**: 每个 Sprint 后检查内存使用是否改善
-4. **UI 响应**: 窗口移动/缩放时应保持流畅
+1. **按 Phase 顺序实施**，每个 Phase 完成后进行充分测试
+2. **代码审查**，确保改动符合项目规范
+3. **性能监控**，记录每个优化项的实际效果
+4. **文档更新**，更新相关代码注释
 
 ---
 
-## Rollback Plan
+## 预期成果
 
-每个 Sprint 都有独立的回滚策略：
-
-### Sprint 1-2 (数据优化)
-```bash
-# 如需回滚
-git checkout sensor_calibrator/data_buffer.py
-git checkout sensor_calibrator/data_processor.py
-```
-
-### Sprint 3 (图表优化)
-```bash
-git checkout sensor_calibrator/chart_manager.py
-```
-
-### Sprint 4 (队列优化)
-```bash
-# 切换回使用 Queue
-git checkout sensor_calibrator/serial_manager.py
-```
-
-### Sprint 5 (日志优化)
-```bash
-# 禁用限流器（在 Config 中添加开关）
-ENABLE_LOG_THROTTLING = False
-```
-
-### Sprint 6 (重构)
-```bash
-# 保留原文件作为备份
-git checkout StableSensorCalibrator.py
-# 删除 ui/ 目录
-```
-
----
-
-## Performance Metrics Checklist
-
-完成每个 Sprint 后记录以下指标：
-
-- [ ] **内存占用**: `tracemalloc` 峰值内存
-- [ ] **CPU 占用**: 数据流运行时的 CPU 使用率
-- [ ] **帧率稳定性**: 图表更新频率的方差
-- [ ] **响应延迟**: 窗口移动/调整大小时的卡顿程度
-- [ ] **测试通过率**: 所有单元测试通过
-
----
-
-## Next Steps
-
-1. **创建功能分支**: `git checkout -b performance-optimization`
-2. **备份当前代码**: `git tag before-optimization`
-3. **开始 Sprint 1**: 修改 `data_buffer.py`
-4. **每日同步**: 每天结束时运行完整测试并提交
-
----
-
-*计划创建完成。是否开始实施 Sprint 1？*
+| 指标 | 优化前 | 优化后 | 提升 |
+|------|--------|--------|------|
+| 数据解析速度 | 基线 | +200-500% | 2-5x |
+| 内存占用 | 基线 | -30% | 30% |
+| 锁持有时间 | 基线 | -80% | 80% |
+| UI 更新频率 | 10 FPS | 15-20 FPS | 50-100% |
+| 校准采集时间 | 基线 | -20% | 20% |

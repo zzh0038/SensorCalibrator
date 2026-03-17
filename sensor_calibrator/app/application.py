@@ -4,6 +4,7 @@ SensorCalibrator Application Core
 主应用类，整合所有组件并管理应用生命周期。
 """
 
+import math
 import threading
 import json
 import time
@@ -822,6 +823,98 @@ class SensorCalibratorApp:
             except Exception:
                 pass
 
+    def _collect_data_batch(self) -> list:
+        """
+        批量收集数据队列中的数据
+        
+        Returns:
+            数据字符串列表
+        """
+        batch = []
+        try:
+            while (not self.data_queue.empty() and 
+                   len(batch) < Config.MAX_GUI_UPDATE_BATCH):
+                try:
+                    data_string = self.data_queue.get_nowait()
+                    batch.append(data_string)
+                except Exception:
+                    break
+        except Exception:
+            pass
+        return batch
+
+    def _process_data_batch(self, batch: list) -> None:
+        """
+        批量处理数据 - 优化版本
+        
+        优化点：
+        - 批量解析数据
+        - 批量追加到缓冲区（减少锁获取次数）
+        
+        Args:
+            batch: 数据字符串列表
+        """
+        if not batch:
+            return
+        
+        # 批量解析
+        parsed_data = []
+        for data_string in batch:
+            mpu_accel, mpu_gyro, adxl_accel = self.parse_sensor_data(data_string)
+            if mpu_accel and mpu_gyro and adxl_accel:
+                parsed_data.append((mpu_accel, mpu_gyro, adxl_accel))
+        
+        if not parsed_data:
+            return
+        
+        # 初始化时间基准
+        if self.data_processor.data_start_time is None:
+            self.data_processor.data_start_time = time.time()
+        
+        # 批量准备数据
+        batch_size = len(parsed_data)
+        start_packet = self.data_processor.packet_count
+        
+        # 准备所有时间戳和数据
+        time_values = []
+        mpu_accel_values = [[] for _ in range(3)]
+        mpu_gyro_values = [[] for _ in range(3)]
+        adxl_accel_values = [[] for _ in range(3)]
+        gravity_values = []
+        
+        for i, (mpu_accel, mpu_gyro, adxl_accel) in enumerate(parsed_data):
+            current_relative_time = (start_packet + i) / self.data_processor.expected_frequency
+            time_values.append(current_relative_time)
+            
+            for j in range(3):
+                mpu_accel_values[j].append(mpu_accel[j])
+                mpu_gyro_values[j].append(mpu_gyro[j])
+                adxl_accel_values[j].append(adxl_accel[j])
+            
+            gravity_mag = math.sqrt(
+                mpu_accel[0] ** 2 +
+                mpu_accel[1] ** 2 +
+                mpu_accel[2] ** 2
+            )
+            gravity_values.append(gravity_mag)
+        
+        # 批量追加到缓冲区（使用内部属性直接访问）
+        # 注意：使用 _time_data 而不是 time_data property，避免返回副本
+        self.data_processor._time_data.extend(time_values)
+        for i in range(3):
+            self.data_processor._mpu_accel_data[i].extend(mpu_accel_values[i])
+            self.data_processor._mpu_gyro_data[i].extend(mpu_gyro_values[i])
+            self.data_processor._adxl_accel_data[i].extend(adxl_accel_values[i])
+        self.data_processor._gravity_mag_data.extend(gravity_values)
+        
+        # 更新数据版本号，使统计缓存失效（关键修复！）
+        self.data_processor._data_version += 1
+        self.data_processor._stats_valid = False
+        
+        # 更新包计数（同时更新 UI 频率计数和处理器计数）
+        self.data_processor.packet_count += batch_size
+        self.packets_received += batch_size
+
     def update_gui(self):
         """更新GUI - 主更新循环"""
         if self.exiting or not self.root or not self.root.winfo_exists():
@@ -841,42 +934,10 @@ class SensorCalibratorApp:
                     self.freq_var.set(f"{self.serial_freq} Hz")
 
             if hasattr(self, "data_queue"):
-                processed_count = 0
-                while not self.data_queue.empty() and processed_count < Config.MAX_GUI_UPDATE_BATCH:
-                    try:
-                        data_string = self.data_queue.get_nowait()
-                        mpu_accel, mpu_gyro, adxl_accel = self.parse_sensor_data(
-                            data_string
-                        )
-
-                        if mpu_accel and mpu_gyro and adxl_accel:
-                            if self.data_processor.data_start_time is None:
-                                self.data_processor.data_start_time = time.time()
-
-                            current_relative_time = (
-                                self.data_processor.packet_count / 
-                                self.data_processor.expected_frequency
-                            )
-                            self.data_processor.packet_count += 1
-
-                            self.data_processor.time_data.append(current_relative_time)
-
-                            for i in range(3):
-                                self.data_processor.mpu_accel_data[i].append(mpu_accel[i])
-                                self.data_processor.mpu_gyro_data[i].append(mpu_gyro[i])
-                                self.data_processor.adxl_accel_data[i].append(adxl_accel[i])
-
-                            gravity_mag = (
-                                mpu_accel[0] ** 2 +
-                                mpu_accel[1] ** 2 +
-                                mpu_accel[2] ** 2
-                            ) ** 0.5
-                            self.data_processor.gravity_mag_data.append(gravity_mag)
-                        
-                        processed_count += 1
-
-                    except Exception:
-                        break
+                # 优化：批量处理数据（减少锁获取次数和函数调用开销）
+                batch = self._collect_data_batch()
+                if batch:
+                    self._process_data_batch(batch)
 
                 if current_time - self.last_stats_update >= self.stats_update_interval:
                     self.safe_update_statistics()

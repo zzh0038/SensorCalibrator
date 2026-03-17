@@ -22,7 +22,13 @@ class RingBuffer(Generic[T]):
     - 固定容量，满时自动覆盖最旧数据
     - 相比 queue.Queue，满队列处理只需单次操作
     - 支持批量放入/取出，减少锁竞争
+    
+    优化：
+    - 使用 __slots__ 减少内存占用
     """
+    
+    # 优化：__slots__ 减少内存占用，提升属性访问速度
+    __slots__ = ['_capacity', '_buffer', '_head', '_tail', '_size', '_lock']
     
     def __init__(self, capacity: int = 1024) -> None:
         """
@@ -147,7 +153,13 @@ class QueueAdapter:
     RingBuffer 的 Queue 接口适配器
     
     使 RingBuffer 可以无缝替换 queue.Queue
+    
+    优化：
+    - 使用 __slots__ 减少内存占用
     """
+    
+    # 优化：__slots__ 减少内存占用
+    __slots__ = ['_buffer', 'maxsize']
     
     def __init__(self, capacity: int = 1024):
         self._buffer = RingBuffer(capacity)

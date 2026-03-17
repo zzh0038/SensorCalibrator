@@ -152,18 +152,26 @@ class CalibrationWorkflow:
         return True
 
     def _collect_calibration_data(self, position: int) -> None:
-        """采集校准数据"""
+        """
+        采集校准数据 - 优化版本（预分配数组）
+        
+        优化点：
+        - 使用预分配 numpy 数组避免动态扩容开销
+        - 使用索引直接赋值代替 list.append
+        """
         try:
-            mpu_accel_samples = []
-            mpu_gyro_samples = []
-            adxl_accel_samples = []
+            # 优化：预分配 numpy 数组（避免 list 动态扩容）
+            max_samples = self._calibration_samples
+            mpu_accel_samples = np.zeros((max_samples, 3))
+            mpu_gyro_samples = np.zeros((max_samples, 3))
+            adxl_accel_samples = np.zeros((max_samples, 3))
 
             start_time = time.time()
             samples_collected = 0
 
             # 采集数据
             while (
-                samples_collected < self._calibration_samples and self._is_calibrating
+                samples_collected < max_samples and self._is_calibrating
             ):
                 try:
                     # 从队列获取数据
@@ -175,9 +183,10 @@ class CalibrationWorkflow:
                         ](data_string)
 
                         if mpu_accel and mpu_gyro and adxl_accel:
-                            mpu_accel_samples.append(mpu_accel)
-                            mpu_gyro_samples.append(mpu_gyro)
-                            adxl_accel_samples.append(adxl_accel)
+                            # 优化：直接赋值到预分配数组
+                            mpu_accel_samples[samples_collected] = mpu_accel
+                            mpu_gyro_samples[samples_collected] = mpu_gyro
+                            adxl_accel_samples[samples_collected] = adxl_accel
                             samples_collected += 1
 
                     # 超时保护
@@ -199,14 +208,19 @@ class CalibrationWorkflow:
                 Config.CALIBRATION_SAMPLES * Config.MIN_CALIBRATION_SAMPLE_RATIO
             )
             if samples_collected >= min_required_samples:
-                # 计算平均值
-                mpu_accel_avg = np.mean(mpu_accel_samples, axis=0)
-                mpu_gyro_avg = np.mean(mpu_gyro_samples, axis=0)
-                adxl_accel_avg = np.mean(adxl_accel_samples, axis=0)
+                # 优化：使用切片获取实际收集的样本（避免拷贝）
+                mpu_accel_valid = mpu_accel_samples[:samples_collected]
+                mpu_gyro_valid = mpu_gyro_samples[:samples_collected]
+                adxl_accel_valid = adxl_accel_samples[:samples_collected]
+                
+                # 计算平均值（使用 numpy 向量化操作）
+                mpu_accel_avg = np.mean(mpu_accel_valid, axis=0)
+                mpu_gyro_avg = np.mean(mpu_gyro_valid, axis=0)
+                adxl_accel_avg = np.mean(adxl_accel_valid, axis=0)
 
                 # 计算标准差用于评估数据质量
-                mpu_accel_std = np.std(mpu_accel_samples, axis=0)
-                adxl_accel_std = np.std(adxl_accel_samples, axis=0)
+                mpu_accel_std = np.std(mpu_accel_valid, axis=0)
+                adxl_accel_std = np.std(adxl_accel_valid, axis=0)
 
                 # 处理校准数据
                 self._process_calibration_data(

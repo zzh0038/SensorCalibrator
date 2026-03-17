@@ -17,7 +17,14 @@ class LogThrottler:
     - 限制日志输出频率
     - 批量输出非紧急日志
     - 紧急日志（ERROR）立即输出
+    
+    优化：
+    - 使用 __slots__ 减少内存占用
     """
+    
+    # 优化：__slots__ 减少内存占用
+    __slots__ = ['interval', 'max_buffer_size', 'immediate_levels', 
+                 '_buffer', '_last_flush', '_log_func']
     
     def __init__(self, 
                  interval_ms: float = 100.0,
@@ -111,7 +118,14 @@ class CountingLogThrottler(LogThrottler):
     计数型日志限流器 - 适用于高频重复消息的压缩
     
     将重复的消息压缩为 "消息内容 (x重复次数)"
+    
+    优化：
+    - 使用 __slots__ 减少内存占用
+    - 注意：继承父类的 __slots__，无需重复定义
     """
+    
+    # 注意：子类自动继承父类的 __slots__，只需要添加新增的属性
+    __slots__ = ['_message_counts']
     
     def __init__(self, 
                  interval_ms: float = 500.0,

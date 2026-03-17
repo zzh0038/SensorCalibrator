@@ -12,6 +12,7 @@ DataProcessor - 管理传感器数据的解析、存储和统计计算
 - 提供数据访问接口
 """
 
+import math
 import time
 import warnings
 from typing import List, Tuple, Optional, Dict, Any
@@ -67,9 +68,29 @@ class DataProcessor:
         self.packet_count = 0
         self.expected_frequency = Config.EXPECTED_FREQUENCY
     
+    @staticmethod
+    def _parse_float_safe(s: str) -> float:
+        """
+        安全地将字符串转换为 float
+        
+        Args:
+            s: 输入字符串
+            
+        Returns:
+            转换后的 float，如果失败返回 0.0
+        """
+        try:
+            return float(s.strip())
+        except (ValueError, TypeError):
+            return 0.0
+
     def parse_sensor_data(self, data_string: str) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[List[float]]]:
         """
-        解析传感器数据字符串
+        解析传感器数据字符串 - 优化版本
+        
+        优化点：
+        - 使用列表推导式替代 for 循环，减少解释器开销
+        - 提取安全转换函数便于复用
         
         Args:
             data_string: 从串口接收的数据字符串，格式为逗号分隔的数字
@@ -80,12 +101,11 @@ class DataProcessor:
         try:
             parts = data_string.split(",")
             if len(parts) >= 9:
-                values = []
-                for part in parts[:9]:
-                    try:
-                        values.append(float(part.strip()))
-                    except (ValueError, TypeError):
-                        values.append(0.0)
+                # 优化：使用列表推导式，比 for 循环更快
+                values = [
+                    self._parse_float_safe(part)
+                    for part in parts[:9]
+                ]
                 
                 mpu_accel = values[0:3]
                 mpu_gyro = values[3:6]
@@ -122,8 +142,8 @@ class DataProcessor:
         current_relative_time = self.packet_count / self.expected_frequency
         self.packet_count += 1
         
-        # 计算重力矢量模长
-        gravity_mag = np.sqrt(
+        # 计算重力矢量模长 - 使用 math.sqrt 优化（标量运算比 numpy 更快）
+        gravity_mag = math.sqrt(
             mpu_accel[0] ** 2 + mpu_accel[1] ** 2 + mpu_accel[2] ** 2
         )
         

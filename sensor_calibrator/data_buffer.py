@@ -21,7 +21,20 @@ class SensorDataBuffer:
     
     Manages multiple data channels (time, accelerometer, gyroscope, etc.)
     with automatic size limiting and efficient slicing.
+    
+    优化：
+    - 使用 __slots__ 减少内存占用
+    - 提供视图模式避免不必要的数据复制
     """
+    
+    # 优化：__slots__ 减少内存占用
+    __slots__ = [
+        '_max_points', '_lock',
+        '_time_data', '_mpu_accel_data', '_mpu_gyro_data', 
+        '_adxl_accel_data', '_gravity_mag_data',
+        '_stats_cache', '_stats_valid', '_data_version', '_stats_version',
+        '_data_start_time', '_packet_count', '_expected_frequency'
+    ]
     
     def __init__(self, max_points: Optional[int] = None) -> None:
         """
@@ -40,9 +53,11 @@ class SensorDataBuffer:
         self._adxl_accel_data: List[Deque[float]] = [deque(maxlen=self._max_points) for _ in range(3)]
         self._gravity_mag_data: Deque[float] = deque(maxlen=self._max_points)
         
-        # Statistics cache
+        # Statistics cache - 优化：添加版本号机制避免重复计算
         self._stats_cache: Dict[str, Any] = {}
         self._stats_valid = False
+        self._data_version = 0  # 数据版本号，数据变化时递增
+        self._stats_version = -1  # 统计信息对应的版本号
         
         # 时间跟踪（兼容 DataProcessor 接口）
         self._data_start_time: Optional[float] = None
@@ -79,42 +94,74 @@ class SensorDataBuffer:
                 self._adxl_accel_data[i].append(adxl_accel[i])
             self._gravity_mag_data.append(gravity_mag)
             
-            # deque 自动处理长度限制，无需手动调用 _enforce_size_limit
+            # deque 自动处理长度限制
+            # 优化：数据变化时递增版本号，使缓存失效
+            self._data_version += 1
             self._stats_valid = False
     
     # -------------------------------------------------------------------------
     # Data Access
     # -------------------------------------------------------------------------
     
+    # -------------------------------------------------------------------------
+    # Data Access - 优化：提供视图模式避免不必要的数据复制
+    # -------------------------------------------------------------------------
+    
+    def get_time_data_view(self):
+        """
+        获取时间数据的只读视图（不复制数据）
+        
+        注意：返回的是视图对象，不是数据副本。数据可能随时被其他线程修改。
+        适用于只读访问且对数据新鲜度要求不高的场景。
+        
+        Returns:
+            DataView: 时间数据视图
+        """
+        return DataView(self._time_data, self._lock)
+    
+    def get_mpu_accel_view(self, channel: int = 0):
+        """
+        获取 MPU 加速度数据的只读视图
+        
+        Args:
+            channel: 通道索引 (0=X, 1=Y, 2=Z)
+            
+        Returns:
+            DataView: 指定通道的数据视图
+        """
+        if 0 <= channel < 3:
+            return DataView(self._mpu_accel_data[channel], self._lock)
+        raise ValueError(f"Channel must be 0, 1, or 2, got {channel}")
+    
     @property
     def time_data(self) -> List[float]:
         """Get copy of time data."""
         with self._lock:
-            return self._time_data.copy()
+            return list(self._time_data)
     
     @property
     def mpu_accel_data(self) -> List[List[float]]:
         """Get copy of MPU6050 accelerometer data (3 channels)."""
         with self._lock:
-            return [ch.copy() for ch in self._mpu_accel_data]
+            return [list(ch) for ch in self._mpu_accel_data]
     
     @property
     def mpu_gyro_data(self) -> List[List[float]]:
         """Get copy of MPU6050 gyroscope data (3 channels)."""
         with self._lock:
-            return [ch.copy() for ch in self._mpu_gyro_data]
+            return [list(ch) for ch in self._mpu_gyro_data]
     
     @property
     def adxl_accel_data(self) -> List[List[float]]:
         """Get copy of ADXL355 accelerometer data (3 channels)."""
         with self._lock:
-            return [ch.copy() for ch in self._adxl_accel_data]
+            return [list(ch) for ch in self._adxl_accel_data]
     
     @property
     def gravity_mag_data(self) -> List[float]:
         """Get copy of gravity magnitude data."""
         with self._lock:
-            return self._gravity_mag_data.copy()
+            return list(self._gravity_mag_data)
     
     def get_latest(self, n: int = 1) -> Optional[Dict[str, Any]]:
         """
@@ -149,7 +196,11 @@ class SensorDataBuffer:
         window_size: Optional[int] = None
     ) -> Dict[str, Dict[str, List[float]]]:
         """
-        Calculate statistics for recent data.
+        Calculate statistics for recent data - 优化版本
+        
+        优化点：
+        - 最小化临界区，只在锁内复制数据
+        - 计算在锁外进行，减少锁竞争
         
         Args:
             window_size: Number of samples to include. Defaults to Config.STATS_WINDOW_SIZE.
@@ -159,6 +210,7 @@ class SensorDataBuffer:
         """
         window = window_size or Config.STATS_WINDOW_SIZE
         
+        # 第一阶段：在锁内快速复制数据
         with self._lock:
             if len(self._time_data) < 10:
                 return self._empty_stats()
@@ -167,36 +219,63 @@ class SensorDataBuffer:
             window = min(window, len(self._time_data))
             start_idx = len(self._time_data) - window
             
-            stats = {
-                'mpu_accel': {'mean': [0.0, 0.0, 0.0], 'std': [0.0, 0.0, 0.0]},
-                'mpu_gyro': {'mean': [0.0, 0.0, 0.0], 'std': [0.0, 0.0, 0.0]},
-                'adxl_accel': {'mean': [0.0, 0.0, 0.0], 'std': [0.0, 0.0, 0.0]},
-                'gravity': {'mean': 0.0, 'std': 0.0},
-            }
+            # 只复制数据，不进行计算
+            mpu_accel_data = []
+            mpu_gyro_data = []
+            adxl_accel_data = []
+            gravity_data = []
             
-            # Calculate for each channel - 使用 itertools.islice 处理 deque
             for i in range(3):
                 if len(self._mpu_accel_data[i]) >= window:
-                    data = list(itertools.islice(self._mpu_accel_data[i], start_idx, None))
-                    stats['mpu_accel']['mean'][i] = float(np.mean(data))
-                    stats['mpu_accel']['std'][i] = float(np.std(data))
-                
+                    mpu_accel_data.append(
+                        list(itertools.islice(self._mpu_accel_data[i], start_idx, None))
+                    )
+                else:
+                    mpu_accel_data.append(None)
+                    
                 if len(self._mpu_gyro_data[i]) >= window:
-                    data = list(itertools.islice(self._mpu_gyro_data[i], start_idx, None))
-                    stats['mpu_gyro']['mean'][i] = float(np.mean(data))
-                    stats['mpu_gyro']['std'][i] = float(np.std(data))
-                
+                    mpu_gyro_data.append(
+                        list(itertools.islice(self._mpu_gyro_data[i], start_idx, None))
+                    )
+                else:
+                    mpu_gyro_data.append(None)
+                    
                 if len(self._adxl_accel_data[i]) >= window:
-                    data = list(itertools.islice(self._adxl_accel_data[i], start_idx, None))
-                    stats['adxl_accel']['mean'][i] = float(np.mean(data))
-                    stats['adxl_accel']['std'][i] = float(np.std(data))
+                    adxl_accel_data.append(
+                        list(itertools.islice(self._adxl_accel_data[i], start_idx, None))
+                    )
+                else:
+                    adxl_accel_data.append(None)
             
             if len(self._gravity_mag_data) >= window:
-                data = list(itertools.islice(self._gravity_mag_data, start_idx, None))
-                stats['gravity']['mean'] = float(np.mean(data))
-                stats['gravity']['std'] = float(np.std(data))
+                gravity_data = list(itertools.islice(self._gravity_mag_data, start_idx, None))
+        
+        # 第二阶段：在锁外进行计算（减少锁竞争）
+        stats = {
+            'mpu_accel': {'mean': [0.0, 0.0, 0.0], 'std': [0.0, 0.0, 0.0]},
+            'mpu_gyro': {'mean': [0.0, 0.0, 0.0], 'std': [0.0, 0.0, 0.0]},
+            'adxl_accel': {'mean': [0.0, 0.0, 0.0], 'std': [0.0, 0.0, 0.0]},
+            'gravity': {'mean': 0.0, 'std': 0.0},
+        }
+        
+        for i in range(3):
+            if mpu_accel_data[i] is not None:
+                stats['mpu_accel']['mean'][i] = float(np.mean(mpu_accel_data[i]))
+                stats['mpu_accel']['std'][i] = float(np.std(mpu_accel_data[i]))
             
-            return stats
+            if mpu_gyro_data[i] is not None:
+                stats['mpu_gyro']['mean'][i] = float(np.mean(mpu_gyro_data[i]))
+                stats['mpu_gyro']['std'][i] = float(np.std(mpu_gyro_data[i]))
+            
+            if adxl_accel_data[i] is not None:
+                stats['adxl_accel']['mean'][i] = float(np.mean(adxl_accel_data[i]))
+                stats['adxl_accel']['std'][i] = float(np.std(adxl_accel_data[i]))
+        
+        if gravity_data:
+            stats['gravity']['mean'] = float(np.mean(gravity_data))
+            stats['gravity']['std'] = float(np.std(gravity_data))
+        
+        return stats
     
     def _empty_stats(self) -> Dict[str, Dict[str, List[float]]]:
         """Return empty statistics structure."""
@@ -222,6 +301,9 @@ class SensorDataBuffer:
             self._gravity_mag_data.clear()
             self._stats_cache.clear()
             self._stats_valid = False
+            # 优化：重置版本号
+            self._data_version = 0
+            self._stats_version = -1
     
     def __len__(self) -> int:
         """Return number of samples in buffer."""
@@ -284,30 +366,8 @@ class SensorDataBuffer:
         """获取期望频率（兼容 DataProcessor）"""
         return self._expected_frequency
     
-    @property
-    def time_data(self) -> Deque[float]:
-        """直接访问时间数据（兼容 DataProcessor，注意：非线程安全直接访问）"""
-        return self._time_data
-    
-    @property
-    def mpu_accel_data(self) -> List[Deque[float]]:
-        """直接访问 MPU 加速度数据（兼容 DataProcessor）"""
-        return self._mpu_accel_data
-    
-    @property
-    def mpu_gyro_data(self) -> List[Deque[float]]:
-        """直接访问 MPU 陀螺仪数据（兼容 DataProcessor）"""
-        return self._mpu_gyro_data
-    
-    @property
-    def adxl_accel_data(self) -> List[Deque[float]]:
-        """直接访问 ADXL 加速度数据（兼容 DataProcessor）"""
-        return self._adxl_accel_data
-    
-    @property
-    def gravity_mag_data(self) -> Deque[float]:
-        """直接访问重力数据（兼容 DataProcessor）"""
-        return self._gravity_mag_data
+    # 注意：time_data, mpu_accel_data 等属性定义在前面（第 93-165 行）
+    # 提供线程安全的副本访问
     
     def has_data(self) -> bool:
         """检查是否有数据（兼容 DataProcessor）"""
@@ -338,45 +398,84 @@ class SensorDataBuffer:
     
     def update_statistics(self) -> Dict[str, Any]:
         """
-        更新并返回统计信息（兼容 DataProcessor）
+        更新并返回统计信息（兼容 DataProcessor）- 优化版本
+        
+        优化点：
+        - 检查缓存版本，数据未变化时直接返回缓存
+        - 最小化临界区，分离数据复制和计算
         
         Returns:
             包含所有统计信息的字典
         """
+        # 优化：检查缓存是否有效（数据未变化）
         with self._lock:
+            if self._stats_valid and self._stats_version == self._data_version:
+                return self._stats_cache.copy()
+            
             if len(self._time_data) < 10:
                 return self._get_empty_stats()
             
             window_size = min(Config.STATS_WINDOW_SIZE, len(self._time_data))
             start_idx = len(self._time_data) - window_size
             
-            stats = self._get_empty_stats()
+            # 在锁内只复制数据
+            mpu_accel_data = []
+            adxl_accel_data = []
+            mpu_gyro_data = []
+            gravity_data = []
             
-            # 计算各通道统计
             for i in range(3):
                 if len(self._mpu_accel_data[i]) >= window_size:
-                    data = list(itertools.islice(self._mpu_accel_data[i], start_idx, None))
-                    stats["mpu_accel_mean"][i] = float(np.mean(data))
-                    stats["mpu_accel_std"][i] = float(np.std(data))
-                
+                    mpu_accel_data.append(
+                        list(itertools.islice(self._mpu_accel_data[i], start_idx, None))
+                    )
+                else:
+                    mpu_accel_data.append(None)
+                    
                 if len(self._adxl_accel_data[i]) >= window_size:
-                    data = list(itertools.islice(self._adxl_accel_data[i], start_idx, None))
-                    stats["adxl_accel_mean"][i] = float(np.mean(data))
-                    stats["adxl_accel_std"][i] = float(np.std(data))
-                
+                    adxl_accel_data.append(
+                        list(itertools.islice(self._adxl_accel_data[i], start_idx, None))
+                    )
+                else:
+                    adxl_accel_data.append(None)
+                    
                 if len(self._mpu_gyro_data[i]) >= window_size:
-                    data = list(itertools.islice(self._mpu_gyro_data[i], start_idx, None))
-                    stats["mpu_gyro_mean"][i] = float(np.mean(data))
-                    stats["mpu_gyro_std"][i] = float(np.std(data))
+                    mpu_gyro_data.append(
+                        list(itertools.islice(self._mpu_gyro_data[i], start_idx, None))
+                    )
+                else:
+                    mpu_gyro_data.append(None)
             
             if len(self._gravity_mag_data) >= window_size:
-                data = list(itertools.islice(self._gravity_mag_data, start_idx, None))
-                stats["gravity_mean"] = float(np.mean(data))
-                stats["gravity_std"] = float(np.std(data))
+                gravity_data = list(itertools.islice(self._gravity_mag_data, start_idx, None))
+        
+        # 在锁外进行计算
+        stats = self._get_empty_stats()
+        
+        for i in range(3):
+            if mpu_accel_data[i] is not None:
+                stats["mpu_accel_mean"][i] = float(np.mean(mpu_accel_data[i]))
+                stats["mpu_accel_std"][i] = float(np.std(mpu_accel_data[i]))
             
+            if adxl_accel_data[i] is not None:
+                stats["adxl_accel_mean"][i] = float(np.mean(adxl_accel_data[i]))
+                stats["adxl_accel_std"][i] = float(np.std(adxl_accel_data[i]))
+            
+            if mpu_gyro_data[i] is not None:
+                stats["mpu_gyro_mean"][i] = float(np.mean(mpu_gyro_data[i]))
+                stats["mpu_gyro_std"][i] = float(np.std(mpu_gyro_data[i]))
+        
+        if gravity_data:
+            stats["gravity_mean"] = float(np.mean(gravity_data))
+            stats["gravity_std"] = float(np.std(gravity_data))
+        
+        # 更新缓存
+        with self._lock:
             self._stats_cache = stats
             self._stats_valid = True
-            return stats
+            self._stats_version = self._data_version
+        
+        return stats.copy()
     
     def get_statistics(self) -> Dict[str, Any]:
         """
@@ -420,11 +519,34 @@ class SensorDataBuffer:
             self._stats_valid = False
             self._data_start_time = None
             self._packet_count = 0
+            # 优化：重置版本号
+            self._data_version = 0
+            self._stats_version = -1
     
+    @staticmethod
+    def _parse_float_safe(s: str) -> float:
+        """
+        安全地将字符串转换为 float
+        
+        Args:
+            s: 输入字符串
+            
+        Returns:
+            转换后的 float，如果失败返回 0.0
+        """
+        try:
+            return float(s.strip())
+        except (ValueError, TypeError):
+            return 0.0
+
     @staticmethod
     def parse_sensor_data(data_string: str) -> Tuple[Optional[List[float]], Optional[List[float]], Optional[List[float]]]:
         """
-        解析传感器数据字符串（从 DataProcessor 迁移）
+        解析传感器数据字符串 - 优化版本
+        
+        优化点：
+        - 使用列表推导式替代 for 循环，减少解释器开销
+        - 提取安全转换函数便于复用
         
         Args:
             data_string: 从串口接收的数据字符串，格式为逗号分隔的数字
@@ -435,12 +557,11 @@ class SensorDataBuffer:
         try:
             parts = data_string.split(",")
             if len(parts) >= 9:
-                values = []
-                for part in parts[:9]:
-                    try:
-                        values.append(float(part.strip()))
-                    except (ValueError, TypeError):
-                        values.append(0.0)
+                # 优化：使用列表推导式，比 for 循环更快
+                values = [
+                    SensorDataBuffer._parse_float_safe(part)
+                    for part in parts[:9]
+                ]
                 
                 mpu_accel = values[0:3]
                 mpu_gyro = values[3:6]
@@ -452,3 +573,88 @@ class SensorDataBuffer:
             pass
         
         return None, None, None
+
+
+
+# =============================================================================
+# DataView - 只读数据视图（优化内存访问）
+# =============================================================================
+
+class DataView:
+    """
+    数据视图 - 只读访问内部数据，避免复制
+    
+    使用场景：
+    - 需要频繁读取数据但不需要修改
+    - 对数据一致性要求不是极高（数据可能随时被写入）
+    - 内存敏感的场景
+    
+    注意：
+    - 视图中的数据可能被其他线程修改
+    - 如果需要稳定的数据快照，请使用 copy() 方法
+    """
+    
+    __slots__ = ['_data', '_lock']
+    
+    def __init__(self, data, lock):
+        """
+        初始化数据视图
+        
+        Args:
+            data: 底层数据（deque）
+            lock: 数据锁
+        """
+        self._data = data
+        self._lock = lock
+    
+    def __len__(self) -> int:
+        """获取数据长度"""
+        with self._lock:
+            return len(self._data)
+    
+    def __getitem__(self, idx):
+        """获取指定索引的数据"""
+        with self._lock:
+            return self._data[idx]
+    
+    def get_latest(self, n: int = 1) -> list:
+        """
+        获取最新的 n 个数据点
+        
+        Args:
+            n: 数据点数量
+            
+        Returns:
+            最新的 n 个数据
+        """
+        with self._lock:
+            if n >= len(self._data):
+                return list(self._data)
+            return list(itertools.islice(self._data, len(self._data) - n, None))
+    
+    def get_range(self, start: int, end: Optional[int] = None) -> list:
+        """
+        获取指定范围的数据
+        
+        Args:
+            start: 起始索引
+            end: 结束索引（None 表示到末尾）
+            
+        Returns:
+            指定范围的数据
+        """
+        with self._lock:
+            return list(itertools.islice(self._data, start, end))
+    
+    def copy(self) -> list:
+        """获取数据的完整副本"""
+        with self._lock:
+            return list(self._data)
+    
+    def __iter__(self):
+        """迭代数据（获取快照后迭代）"""
+        return iter(self.copy())
+
+
+# 为向后兼容添加别名
+SensorDataView = DataView
