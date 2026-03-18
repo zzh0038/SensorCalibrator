@@ -1606,14 +1606,14 @@ class UIManager:
         visual_frame.pack(fill="x", pady=5)
         
         # 左侧：Canvas 2D可视化
-        canvas_frame = tk.Frame(visual_frame, bg=t.BG_CARD, width=220, height=220)
-        canvas_frame.pack(side="left", padx=10)
+        canvas_frame = tk.Frame(visual_frame, bg=t.BG_CARD, width=240, height=240)
+        canvas_frame.pack(side="left", padx=5)
         canvas_frame.pack_propagate(False)  # 固定大小
         
         self.widgets['cal_visual_canvas'] = tk.Canvas(
             canvas_frame,
-            width=200,
-            height=200,
+            width=220,
+            height=220,
             bg=t.BG_CARD,
             highlightthickness=1,
             highlightbackground="#cccccc"
@@ -1630,14 +1630,16 @@ class UIManager:
         self.vars['cal_position_desc'] = StringVar(value="准备开始校准")
         self.vars['cal_position_tip'] = StringVar(value="点击 'Start Calibration' 开始")
         
-        tk.Label(
+        desc_lbl = tk.Label(
             text_frame,
             textvariable=self.vars['cal_position_desc'],
             bg=t.BG_CARD,
             fg=t.TEXT_PRIMARY,
             font=("Segoe UI", 11, "bold"),
-            wraplength=200
-        ).pack(anchor="w", pady=(10, 5))
+            wraplength=280,
+            justify="left"
+        )
+        desc_lbl.pack(anchor="w", pady=(5, 5), fill="x")
         
         tk.Label(
             text_frame,
@@ -1645,17 +1647,18 @@ class UIManager:
             bg=t.BG_CARD,
             fg=t.TEXT_SECONDARY,
             font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", pady=(10, 2))
+        ).pack(anchor="w", pady=(5, 2))
         
-        tk.Label(
+        tip_lbl = tk.Label(
             text_frame,
             textvariable=self.vars['cal_position_tip'],
             bg=t.BG_CARD,
             fg=t.INFO,
             font=("Segoe UI", 9),
-            wraplength=200,
+            wraplength=280,
             justify="left"
-        ).pack(anchor="w")
+        )
+        tip_lbl.pack(anchor="w", fill="x")
         
         # === 当前位置操作 ===
         current_card = tk.LabelFrame(

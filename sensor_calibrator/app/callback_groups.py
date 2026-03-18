@@ -195,14 +195,29 @@ class CalibrationCallbacks(CallbackGroup):
         self.app.calibration_workflow.finish_calibration()
     
     def generate_calibration_commands(self):
-        """生成校准命令"""
-        self.app.calibration_workflow.generate_commands()
+        """生成校准命令并显示在命令文本框中"""
+        commands = self.app.calibration_workflow.generate_calibration_commands()
+        if not commands:
+            self.app.log_message("Error: No calibration parameters available. Please complete calibration first.")
+            return
+        
+        # 显示在命令文本框中
+        if hasattr(self.app, 'cmd_text') and self.app.cmd_text:
+            self.app.cmd_text.delete(1.0, "end")
+            for cmd in commands:
+                self.app.cmd_text.insert("end", cmd + "\n")
+        
+        self.app.log_message(f"Generated {len(commands)} calibration commands")
     
     def send_all_commands(self):
-        """发送所有命令"""
-        commands = self.app.calibration_workflow.get_commands()
+        """发送所有命令到设备"""
+        commands = self.app.calibration_workflow.generate_calibration_commands()
         if not commands:
-            self.app.log_message("No commands to send")
+            self.app.log_message("Error: No commands to send. Please complete calibration first.")
+            return
+        
+        if not self.app.ser or not self.app.ser.is_open:
+            self.app.log_message("Error: Not connected to device")
             return
         
         thread = threading.Thread(
@@ -216,21 +231,91 @@ class CalibrationCallbacks(CallbackGroup):
         """在后台线程发送命令"""
         for cmd in commands:
             if self.app.ser and self.app.ser.is_open:
-                self.app.ser.write(f"{cmd}\n".encode())
-                time.sleep(0.1)
-        self.app.log_message(f"Sent {len(commands)} commands")
+                try:
+                    self.app.ser.write(f"{cmd}\n".encode())
+                    time.sleep(0.1)
+                except Exception as e:
+                    self.app.log_message(f"Error sending command: {e}")
+                    return
+        self.app.log_message(f"Sent {len(commands)} calibration commands to device")
     
     def resend_all_commands(self):
         """重新发送所有命令"""
         self.send_all_commands()
     
     def save_calibration_parameters(self):
-        """保存校准参数"""
-        self.app.calibration_workflow.save_parameters()
+        """保存校准参数到文件"""
+        params = self.app.calibration_workflow.calibration_params
+        if not params:
+            self.app.log_message("Error: No calibration parameters to save. Please complete calibration first.")
+            return
+        
+        from tkinter import filedialog
+        from datetime import datetime
+        import json
+        
+        # 构建默认文件名
+        default_name = f"calibration_params_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        # 弹出保存对话框
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=default_name,
+            title="Save Calibration Parameters",
+        )
+        
+        if not filename:
+            self.app.log_message("Save cancelled")
+            return
+        
+        # 构建保存数据
+        save_data = {
+            "timestamp": datetime.now().isoformat(),
+            "calibration_params": params,
+        }
+        
+        # 保存到文件
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(save_data, f, indent=2, ensure_ascii=False)
+            self.app.log_message(f"Calibration parameters saved to: {filename}")
+        except Exception as e:
+            self.app.log_message(f"Error saving calibration parameters: {e}")
     
     def load_calibration_parameters(self):
-        """加载校准参数"""
-        self.app.calibration_workflow.load_parameters()
+        """加载校准参数从文件"""
+        from tkinter import filedialog
+        import json
+        
+        filename = filedialog.askopenfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            title="Load Calibration Parameters",
+        )
+        
+        if not filename:
+            self.app.log_message("Load cancelled")
+            return
+        
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            
+            params = data.get("calibration_params")
+            if not params:
+                self.app.log_message("Error: Invalid calibration file format")
+                return
+            
+            # 设置到校准工作流
+            self.app.calibration_workflow._calibration_params = params
+            
+            # 显示在命令文本框中
+            self.generate_calibration_commands()
+            
+            self.app.log_message(f"Calibration parameters loaded from: {filename}")
+        except Exception as e:
+            self.app.log_message(f"Error loading calibration parameters: {e}")
     
     def read_calibration_params(self):
         """读取校准参数"""

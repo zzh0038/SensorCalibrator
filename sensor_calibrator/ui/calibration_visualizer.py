@@ -182,23 +182,34 @@ class CalibrationVisualizer2D:
             font=('Segoe UI', 10, 'bold')
         )
         
-        # 重力箭头
+        # 重力箭头 - Z轴朝下的情况
         if pos['down_axis'] == 'Z+':
-            # Z+ 朝下：重力指向屏幕外（用点表示）
+            # Z+ 朝下：电路板朝上，重力指向用户（从屏幕出来）
             self.canvas.create_text(
                 cx, 25,
-                text="⊙ 重力指向你（顶面朝下）",
+                text="● Z+朝下:电路板朝上",
                 fill=self.COLORS['gravity'],
                 font=('Segoe UI', 9, 'bold')
+            )
+            # 在中心绘制一个圆点表示Z+方向
+            self.canvas.create_oval(
+                cx - 4, cy - 4, cx + 4, cy + 4,
+                fill=self.COLORS['gravity'],
+                outline=''
             )
         else:
-            # Z- 朝下：重力指向屏幕里（用叉表示）
+            # Z- 朝下：电路板朝下，重力远离用户（进入屏幕）
             self.canvas.create_text(
                 cx, 25,
-                text="⊗ 重力远离你（底面朝下）",
+                text="◎ Z-朝下:电路板朝下",
                 fill=self.COLORS['gravity'],
                 font=('Segoe UI', 9, 'bold')
             )
+            # 在中心绘制一个叉表示Z-方向
+            self.canvas.create_line(cx - 6, cy - 6, cx + 6, cy + 6, 
+                                   fill=self.COLORS['gravity'], width=2)
+            self.canvas.create_line(cx - 6, cy + 6, cx + 6, cy - 6, 
+                                   fill=self.COLORS['gravity'], width=2)
             
     def _draw_side_view(self, pos):
         """侧视图 - 从侧面看（X轴相关）"""

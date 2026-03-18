@@ -381,12 +381,19 @@ class CalibrationWorkflow:
     def _auto_advance_to_next(self, position: int):
         """
         自动进入下一个位置的延迟执行
+        包含位置稳定性检测：等待传感器位置正确且稳定后才自动采集
         
         Args:
             position: 目标位置索引
         """
-        # 延迟等待
-        time.sleep(self.auto_advance_delay)
+        self._log_message(f"自动引导：请放置传感器到位置 {position + 1}")
+        
+        # 等待位置稳定
+        stable = self._wait_for_position_stable(position, timeout=30.0)
+        
+        if not stable:
+            self._log_message("自动引导：位置检测超时，请手动点击 Capture")
+            return
         
         # 在锁内读取状态，避免竞态条件
         with self._state_lock:
@@ -401,6 +408,93 @@ class CalibrationWorkflow:
                 self.capture_position()
         elif is_paused:
             self._log_message("校准已暂停，自动引导等待恢复...")
+    
+    def _wait_for_position_stable(self, position: int, timeout: float = 30.0) -> bool:
+        """
+        等待传感器位置稳定
+        
+        检测逻辑：
+        1. 检查传感器朝向是否符合预期位置的重力方向
+        2. 等待数据稳定（标准差小于阈值持续2秒）
+        
+        Args:
+            position: 目标位置索引
+            timeout: 超时时间（秒）
+            
+        Returns:
+            True: 位置已稳定，可以采集
+            False: 超时，位置未稳定
+        """
+        # 位置对应的重力方向 (X, Y, Z)
+        expected_directions = [
+            (1, 0, 0),   # +X: X轴朝下 (+g)
+            (-1, 0, 0),  # -X: X轴朝上 (-g)
+            (0, 1, 0),   # +Y: Y轴朝下 (+g)
+            (0, -1, 0),  # -Y: Y轴朝上 (-g)
+            (0, 0, 1),   # +Z: Z轴朝下 (+g)
+            (0, 0, -1),  # -Z: Z轴朝上 (-g)
+        ]
+        expected = expected_directions[position]
+        
+        start_time = time.time()
+        stability_start = None
+        
+        # 滑动窗口用于计算稳定性
+        window_size = 20
+        recent_samples = []
+        
+        while time.time() - start_time < timeout:
+            # 检查暂停状态
+            with self._state_lock:
+                if self._is_paused or not self._is_calibrating:
+                    return False
+            
+            try:
+                # 从队列获取最新数据（非阻塞）
+                data_string = self.data_queue.get(timeout=0.05)
+                
+                if "parse_sensor_data" in self.callbacks:
+                    mpu_accel, _, adxl_accel = self.callbacks["parse_sensor_data"](data_string)
+                    
+                    if mpu_accel and adxl_accel:
+                        # 使用MPU6050数据检测（也可以使用ADXL355）
+                        accel = np.array(mpu_accel)
+                        
+                        # 归一化
+                        magnitude = np.linalg.norm(accel)
+                        if magnitude > 0.1:
+                            normalized = accel / magnitude
+                            
+                            # 检查方向是否匹配预期（点积接近1表示方向一致）
+                            expected_vec = np.array(expected, dtype=float)
+                            dot_product = np.dot(normalized, expected_vec)
+                            
+                            if dot_product > 0.85:  # 约30度以内
+                                recent_samples.append(accel)
+                                if len(recent_samples) > window_size:
+                                    recent_samples.pop(0)
+                                
+                                # 检查稳定性（标准差）
+                                if len(recent_samples) >= window_size:
+                                    std = np.std(recent_samples, axis=0)
+                                    max_std = np.max(std)
+                                    
+                                    if max_std < 0.05:  # 稳定性阈值
+                                        if stability_start is None:
+                                            stability_start = time.time()
+                                            self._log_message(f"位置 {position + 1} 接近目标，等待稳定...")
+                                        elif time.time() - stability_start >= 2.0:  # 稳定2秒
+                                            self._log_message(f"位置 {position + 1} 已稳定，准备采集")
+                                            return True
+                                    else:
+                                        stability_start = None  # 不稳定，重置计时
+            except queue.Empty:
+                time.sleep(0.01)
+                continue
+            except Exception:
+                continue
+        
+        return False  # 超时
 
     def finish_calibration(self) -> None:
         """完成校准并计算参数（线程安全）"""
