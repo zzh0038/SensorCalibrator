@@ -24,48 +24,48 @@ class CalibrationVisualizer2D:
             'down_axis': 'X+', 
             'view': 'side', 
             'gravity_dir': 'right',
-            'description': 'X轴朝下（右侧面朝下）',
-            'tip': '将传感器右侧朝下放置'
+            'description': '右侧面朝下 (X+)',
+            'tip': '右侧朝下'
         },
         {
             'name': '-X', 
             'down_axis': 'X-', 
             'view': 'side', 
             'gravity_dir': 'left',
-            'description': 'X轴朝上（左侧面朝下）',
-            'tip': '将传感器左侧朝下放置'
+            'description': '左侧面朝下 (X-)',
+            'tip': '左侧朝下'
         },
         {
             'name': '+Y', 
             'down_axis': 'Y+', 
             'view': 'front', 
             'gravity_dir': 'down',
-            'description': 'Y轴朝下（前面朝下）',
-            'tip': '将传感器前面朝下放置'
+            'description': '前面朝下 (Y+)',
+            'tip': '前面朝下'
         },
         {
             'name': '-Y', 
             'down_axis': 'Y-', 
             'view': 'front', 
             'gravity_dir': 'up',
-            'description': 'Y轴朝上（后面朝下）',
-            'tip': '将传感器后面朝下放置'
+            'description': '后面朝下 (Y-)',
+            'tip': '后面朝下'
         },
         {
             'name': '+Z', 
             'down_axis': 'Z+', 
             'view': 'top', 
             'gravity_dir': 'out',
-            'description': 'Z轴朝下（顶面朝下）',
-            'tip': '将传感器顶面朝下放置（电路板朝上）'
+            'description': '顶面朝下 (Z+)',
+            'tip': '顶面朝下'
         },
         {
             'name': '-Z', 
             'down_axis': 'Z-', 
             'view': 'top', 
             'gravity_dir': 'in',
-            'description': 'Z轴朝上（底面朝下）',
-            'tip': '将传感器底面朝下放置（电路板朝下）'
+            'description': '底面朝下 (Z-)',
+            'tip': '底面朝下'
         },
     ]
     
@@ -128,7 +128,7 @@ class CalibrationVisualizer2D:
             
     def _draw_top_view(self, pos):
         """俯视图 - 从上方看（Z轴相关）"""
-        cx, cy = 100, 100  # 中心点
+        cx, cy = 90, 90  # 中心点
         
         # 绘制传感器矩形（顶面）
         rect_size = 60
@@ -182,38 +182,27 @@ class CalibrationVisualizer2D:
             font=('Segoe UI', 10, 'bold')
         )
         
-        # 重力箭头 - Z轴朝下的情况
+        # 重力指示 - 简化显示
         if pos['down_axis'] == 'Z+':
-            # Z+ 朝下：电路板朝上，重力指向用户（从屏幕出来）
+            # Z+ 朝下
             self.canvas.create_text(
-                cx, 25,
-                text="● Z+朝下:电路板朝上",
+                cx, 20,
+                text="● Z+ (顶面朝下)",
                 fill=self.COLORS['gravity'],
-                font=('Segoe UI', 9, 'bold')
-            )
-            # 在中心绘制一个圆点表示Z+方向
-            self.canvas.create_oval(
-                cx - 4, cy - 4, cx + 4, cy + 4,
-                fill=self.COLORS['gravity'],
-                outline=''
+                font=('Segoe UI', 8, 'bold')
             )
         else:
-            # Z- 朝下：电路板朝下，重力远离用户（进入屏幕）
+            # Z- 朝下
             self.canvas.create_text(
-                cx, 25,
-                text="◎ Z-朝下:电路板朝下",
+                cx, 20,
+                text="◎ Z- (底面朝下)",
                 fill=self.COLORS['gravity'],
-                font=('Segoe UI', 9, 'bold')
+                font=('Segoe UI', 8, 'bold')
             )
-            # 在中心绘制一个叉表示Z-方向
-            self.canvas.create_line(cx - 6, cy - 6, cx + 6, cy + 6, 
-                                   fill=self.COLORS['gravity'], width=2)
-            self.canvas.create_line(cx - 6, cy + 6, cx + 6, cy - 6, 
-                                   fill=self.COLORS['gravity'], width=2)
             
     def _draw_side_view(self, pos):
         """侧视图 - 从侧面看（X轴相关）"""
-        cx, cy = 100, 100
+        cx, cy = 90, 90
         
         # 绘制传感器矩形（侧面）
         rect_width = 60
@@ -281,7 +270,7 @@ class CalibrationVisualizer2D:
             
     def _draw_front_view(self, pos):
         """正视图 - 从前面看（Y轴相关）"""
-        cx, cy = 100, 100
+        cx, cy = 90, 90
         
         # 绘制传感器矩形（前面）
         rect_size = 70

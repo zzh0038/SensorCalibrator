@@ -1606,14 +1606,14 @@ class UIManager:
         visual_frame.pack(fill="x", pady=5)
         
         # 左侧：Canvas 2D可视化
-        canvas_frame = tk.Frame(visual_frame, bg=t.BG_CARD, width=240, height=240)
+        canvas_frame = tk.Frame(visual_frame, bg=t.BG_CARD, width=200, height=200)
         canvas_frame.pack(side="left", padx=5)
         canvas_frame.pack_propagate(False)  # 固定大小
         
         self.widgets['cal_visual_canvas'] = tk.Canvas(
             canvas_frame,
-            width=220,
-            height=220,
+            width=180,
+            height=180,
             bg=t.BG_CARD,
             highlightthickness=1,
             highlightbackground="#cccccc"
@@ -1635,19 +1635,19 @@ class UIManager:
             textvariable=self.vars['cal_position_desc'],
             bg=t.BG_CARD,
             fg=t.TEXT_PRIMARY,
-            font=("Segoe UI", 11, "bold"),
-            wraplength=280,
+            font=("Segoe UI", 10, "bold"),
+            wraplength=220,
             justify="left"
         )
-        desc_lbl.pack(anchor="w", pady=(5, 5), fill="x")
+        desc_lbl.pack(anchor="w", pady=(3, 3), fill="x")
         
         tk.Label(
             text_frame,
-            text="操作提示：",
+            text="提示：",
             bg=t.BG_CARD,
             fg=t.TEXT_SECONDARY,
             font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", pady=(5, 2))
+        ).pack(anchor="w", pady=(3, 1))
         
         tip_lbl = tk.Label(
             text_frame,
@@ -1655,7 +1655,7 @@ class UIManager:
             bg=t.BG_CARD,
             fg=t.INFO,
             font=("Segoe UI", 9),
-            wraplength=280,
+            wraplength=220,
             justify="left"
         )
         tip_lbl.pack(anchor="w", fill="x")
