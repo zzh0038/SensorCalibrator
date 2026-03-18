@@ -115,29 +115,11 @@ class DataStreamCallbacks(CallbackGroup):
     
     def start_data_stream(self):
         """开始数据流"""
-        if self.app.serial_manager.start_reading():
-            if self.app.data_btn:
-                self.app.data_btn.config(text="Stop Data")
-            if self.app.data_btn2:
-                self.app.data_btn2.config(text="Stop Data")
-            self.app.is_reading = True
-            # 更新 Dashboard 数据流状态
-            if hasattr(self.app, 'stream_status_var') and self.app.stream_status_var:
-                self.app.stream_status_var.set("Running")
-            self.app.log_message("Data stream started")
+        self.app.start_data_stream()
     
     def stop_data_stream(self):
         """停止数据流"""
-        self.app.serial_manager.stop_reading()
-        if self.app.data_btn:
-            self.app.data_btn.config(text="Start Data")
-        if self.app.data_btn2:
-            self.app.data_btn2.config(text="Start Data")
-        self.app.is_reading = False
-        # 更新 Dashboard 数据流状态
-        if hasattr(self.app, 'stream_status_var') and self.app.stream_status_var:
-            self.app.stream_status_var.set("Stopped")
-        self.app.log_message("Data stream stopped")
+        self.app.stop_data_stream()
 
 
 class CalibrationCallbacks(CallbackGroup):

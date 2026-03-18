@@ -1384,6 +1384,12 @@ class SensorCalibratorApp:
         if self.serial_manager.send_ss0_start_stream():
             if self.serial_manager.start_reading():
                 self.is_reading = True
+                # 更新按钮文本
+                if self.data_btn:
+                    self.data_btn.config(text="Stop Data")
+                # 更新 Dashboard 数据流状态
+                if hasattr(self, 'stream_status_var') and self.stream_status_var:
+                    self.stream_status_var.set("Running")
                 self.log_message("Data stream started")
                 
                 self.clear_data()
@@ -1401,6 +1407,12 @@ class SensorCalibratorApp:
         self.is_reading = False
         self.serial_manager.stop_reading()
         self.serial_manager.send_ss4_stop_stream()
+        # 更新按钮文本
+        if self.data_btn:
+            self.data_btn.config(text="Start Data")
+        # 更新 Dashboard 数据流状态
+        if hasattr(self, 'stream_status_var') and self.stream_status_var:
+            self.stream_status_var.set("Stopped")
         self.log_message("Data stream stopped")
 
     def read_sensor_properties(self):
