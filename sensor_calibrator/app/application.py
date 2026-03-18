@@ -207,7 +207,7 @@ class SensorCalibratorApp:
         # 创建可滚动的左侧面板
         canvas = tk.Canvas(left_panel, highlightthickness=0, width=UIConfig.LEFT_PANEL_WIDTH)
         scrollbar = ttk.Scrollbar(left_panel, orient="vertical", command=canvas.yview)
-        self.scrollable_frame = ttk.Frame(canvas, width=UIConfig.LEFT_PANEL_WIDTH)
+        self.scrollable_frame = tk.Frame(canvas, width=UIConfig.LEFT_PANEL_WIDTH, bg='#f8f9fa')
 
         self.scrollable_frame.bind(
             "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
@@ -289,57 +289,8 @@ class SensorCalibratorApp:
         # 创建 AppCallbacks 实例
         self.ui_callbacks = AppCallbacks(self)
         
-        # 创建回调函数字典
-        callbacks = {
-            # 串口相关
-            'refresh_ports': self.ui_callbacks.refresh_ports,
-            'toggle_connection': self.ui_callbacks.toggle_connection,
-            
-            # 数据流相关
-            'toggle_data_stream': self.ui_callbacks.toggle_data_stream,
-            'toggle_data_stream2': self.ui_callbacks.toggle_data_stream2,
-            
-            # 校准相关
-            'start_calibration': self.ui_callbacks.start_calibration,
-            'capture_position': self.ui_callbacks.capture_position,
-            'send_all_commands': self.ui_callbacks.send_all_commands,
-            'save_calibration_parameters': self.ui_callbacks.save_calibration_parameters,
-            'read_properties': self.ui_callbacks.read_sensor_properties,
-            'read_device_info': self.ui_callbacks.read_device_info,
-            'resend_all_commands': self.ui_callbacks.resend_all_commands,
-            
-            # 坐标模式
-            'set_local_coordinate_mode': self.ui_callbacks.set_local_coordinate_mode,
-            'set_global_coordinate_mode': self.ui_callbacks.set_global_coordinate_mode,
-            
-            # 激活相关
-            'activate_sensor': self.ui_callbacks.activate_sensor,
-            'verify_activation': self.ui_callbacks.verify_activation,
-            'verify_activation_status': self.ui_callbacks.verify_activation_status,
-            'copy_activation_key': self.ui_callbacks.copy_activation_key,
-            
-            # 校准参数读取（从 SS:8 中剥离的独立功能）
-            'read_calibration_params': self.ui_callbacks.read_calibration_params,
-            
-            # 网络配置
-            'set_wifi_config': self.ui_callbacks.set_wifi_config,
-            'read_wifi_config': self.ui_callbacks.read_wifi_config,
-            'set_mqtt_config': self.ui_callbacks.set_mqtt_config,
-            'read_mqtt_config': self.ui_callbacks.read_mqtt_config,
-            'set_ota_config': self.ui_callbacks.set_ota_config,
-            'read_ota_config': self.ui_callbacks.read_ota_config,
-            
-            # 报警和设备控制
-            'set_alarm_threshold': self.ui_callbacks.set_alarm_threshold,
-            'restart_sensor': self.ui_callbacks.restart_sensor,
-            'save_config': self.ui_callbacks.save_config,
-            
-            # UI 重置
-            'reset_ui_with_confirmation': self.ui_callbacks.reset_ui_with_confirmation,
-            
-            # 校准状态检查
-            'check_calibration_status': self.ui_callbacks.check_calibration_status,
-        }
+        # 使用 CallbackRegistry 获取所有回调
+        callbacks = self.ui_callbacks.callbacks
         
         # 初始化 UIManager
         self.ui_manager = UIManager(self.scrollable_frame, callbacks)
@@ -2618,7 +2569,116 @@ class SensorCalibratorApp:
         if hasattr(self, 'restart_sensor_btn') and self.restart_sensor_btn:
             self.restart_sensor_btn.config(state="normal")
         
-        self.log_message("Network & Device config buttons enabled")
+        # Sprint 1: 启用新增按钮
+        # Cloud MQTT 按钮
+        if self.ui_manager.widgets.get('set_aliyun_mqtt_btn'):
+            self.ui_manager.widgets['set_aliyun_mqtt_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('mqtt_local_mode_btn'):
+            self.ui_manager.widgets['mqtt_local_mode_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('mqtt_aliyun_mode_btn'):
+            self.ui_manager.widgets['mqtt_aliyun_mode_btn'].config(state="normal")
+        # Position 按钮
+        if self.ui_manager.widgets.get('set_position_btn'):
+            self.ui_manager.widgets['set_position_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('set_install_mode_btn'):
+            self.ui_manager.widgets['set_install_mode_btn'].config(state="normal")
+        # System 按钮
+        if self.ui_manager.widgets.get('save_sensor_config_btn'):
+            self.ui_manager.widgets['save_sensor_config_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('restore_default_btn'):
+            self.ui_manager.widgets['restore_default_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('restart_sensor_system_btn'):
+            self.ui_manager.widgets['restart_sensor_system_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('deactivate_sensor_btn'):
+            self.ui_manager.widgets['deactivate_sensor_btn'].config(state="normal")
+        
+        # Sprint 2: Advanced 标签页按钮
+        if self.ui_manager.widgets.get('set_kalman_filter_btn'):
+            self.ui_manager.widgets['set_kalman_filter_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('filter_on_btn'):
+            self.ui_manager.widgets['filter_on_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('filter_off_btn'):
+            self.ui_manager.widgets['filter_off_btn'].config(state="normal")
+        
+        # Sprint 2: Alarm Levels 标签页按钮
+        if self.ui_manager.widgets.get('set_gyro_levels_btn'):
+            self.ui_manager.widgets['set_gyro_levels_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('set_accel_levels_btn'):
+            self.ui_manager.widgets['set_accel_levels_btn'].config(state="normal")
+        
+        # Sprint 2: Auxiliary 标签页按钮
+        if self.ui_manager.widgets.get('set_vks_btn'):
+            self.ui_manager.widgets['set_vks_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('set_tme_btn'):
+            self.ui_manager.widgets['set_tme_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('set_magof_btn'):
+            self.ui_manager.widgets['set_magof_btn'].config(state="normal")
+        
+        # Sprint 2: Debug 标签页按钮
+        if self.ui_manager.widgets.get('cpu_monitor_btn'):
+            self.ui_manager.widgets['cpu_monitor_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('sensor_cal_btn'):
+            self.ui_manager.widgets['sensor_cal_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('buzzer_btn'):
+            self.ui_manager.widgets['buzzer_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('check_upgrade_btn'):
+            self.ui_manager.widgets['check_upgrade_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('ap_mode_btn'):
+            self.ui_manager.widgets['ap_mode_btn'].config(state="normal")
+        
+        # Sprint 3: Camera 标签页按钮
+        if self.ui_manager.widgets.get('camera_photo_on_btn'):
+            self.ui_manager.widgets['camera_photo_on_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('camera_photo_off_btn'):
+            self.ui_manager.widgets['camera_photo_off_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('monitoring_on_btn'):
+            self.ui_manager.widgets['monitoring_on_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('monitoring_off_btn'):
+            self.ui_manager.widgets['monitoring_off_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('timelapse_on_btn'):
+            self.ui_manager.widgets['timelapse_on_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('timelapse_off_btn'):
+            self.ui_manager.widgets['timelapse_off_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('take_photo_btn'):
+            self.ui_manager.widgets['take_photo_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('reboot_camera_slave_btn'):
+            self.ui_manager.widgets['reboot_camera_slave_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('reboot_camera_module_btn'):
+            self.ui_manager.widgets['reboot_camera_module_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('toggle_camera_stream_btn'):
+            self.ui_manager.widgets['toggle_camera_stream_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('toggle_push_stream_btn'):
+            self.ui_manager.widgets['toggle_push_stream_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('force_camera_ota_btn'):
+            self.ui_manager.widgets['force_camera_ota_btn'].config(state="normal")
+        if self.ui_manager.widgets.get('force_esp32_ota_btn'):
+            self.ui_manager.widgets['force_esp32_ota_btn'].config(state="normal")
+        
+        # Dashboard 标签页按钮
+        dashboard_buttons = [
+            'dashboard_read_sensor_properties_btn',
+            'dashboard_read_calibration_params_btn', 
+            'dashboard_save_sensor_config_btn',
+            'dashboard_restart_sensor_btn'
+        ]
+        for btn_name in dashboard_buttons:
+            if self.ui_manager.widgets.get(btn_name):
+                self.ui_manager.widgets[btn_name].config(state="normal")
+        
+        # Calibration 标签页按钮
+        cal_buttons = [
+            'cal_start_calibration_btn',
+            'cal_capture_position_btn',
+            'cal_finish_calibration_btn',
+            'cal_generate_calibration_commands_btn',
+            'cal_send_all_commands_btn',
+            'cal_save_calibration_parameters_btn'
+        ]
+        for btn_name in cal_buttons:
+            if self.ui_manager.widgets.get(btn_name):
+                self.ui_manager.widgets[btn_name].config(state="normal")
+        
+        self.log_message("All config buttons enabled")
 
     def reset_calibration_state(self):
         """重置校准状态"""
@@ -2691,35 +2751,31 @@ class SensorCalibratorApp:
         
         # Data Stream 按钮
         if self.data_btn:
-            self.data_btn.config(text="Start Data Stream", state="disabled")
-        if self.data_btn2:
-            self.data_btn2.config(text="Start NormalData", state="disabled")
+            self.data_btn.config(text="Start Data", state="disabled")
         
-        # 校准按钮
-        if self.calibrate_btn:
-            self.calibrate_btn.config(state="disabled")
-        if self.capture_btn:
-            self.capture_btn.config(state="disabled")
+        # Dashboard 标签页按钮
+        dashboard_buttons = [
+            'dashboard_read_sensor_properties_btn',
+            'dashboard_read_calibration_params_btn',
+            'dashboard_save_sensor_config_btn',
+            'dashboard_restart_sensor_btn'
+        ]
+        for btn_name in dashboard_buttons:
+            if self.ui_manager.widgets.get(btn_name):
+                self.ui_manager.widgets[btn_name].config(state="disabled")
         
-        # 命令按钮
-        if self.send_btn:
-            self.send_btn.config(state="disabled")
-        if self.save_btn:
-            self.save_btn.config(state="disabled")
-        if self.resend_btn:
-            self.resend_btn.config(state="disabled")
-        
-        # 读取按钮
-        if self.read_props_btn:
-            self.read_props_btn.config(state="disabled")
-        if self.read_device_btn:
-            self.read_device_btn.config(state="disabled")
-        
-        # 坐标模式按钮
-        if self.local_coord_btn:
-            self.local_coord_btn.config(state="disabled")
-        if self.global_coord_btn:
-            self.global_coord_btn.config(state="disabled")
+        # Calibration 标签页按钮
+        cal_buttons = [
+            'cal_start_calibration_btn',
+            'cal_capture_position_btn',
+            'cal_finish_calibration_btn',
+            'cal_generate_calibration_commands_btn',
+            'cal_send_all_commands_btn',
+            'cal_save_calibration_parameters_btn'
+        ]
+        for btn_name in cal_buttons:
+            if self.ui_manager.widgets.get(btn_name):
+                self.ui_manager.widgets[btn_name].config(state="disabled")
         
         # 激活按钮
         if hasattr(self, 'activate_btn') and self.activate_btn:
