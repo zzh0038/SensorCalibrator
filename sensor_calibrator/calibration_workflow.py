@@ -27,9 +27,6 @@ except (ImportError, ModuleNotFoundError) as e:
     _import_error_message = str(e)
     compute_six_position_calibration = None
     compute_gyro_offset = None
-scripts_path = Path(__file__).parent.parent / "scripts"
-sys.path.insert(0, str(scripts_path))
-from calibration import compute_six_position_calibration, compute_gyro_offset
 
 
 class CalibrationWorkflow:

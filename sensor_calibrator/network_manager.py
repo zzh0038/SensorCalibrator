@@ -92,6 +92,28 @@ class NetworkManager:
         """设置OTA参数"""
         self._ota_params = value.copy()
     
+    # ==================== 验证辅助方法 ====================
+    
+    def _validate_port(self, port: str) -> tuple[bool, str]:
+        """
+        验证端口号有效性
+        
+        Args:
+            port: 端口号字符串
+            
+        Returns:
+            tuple[bool, str]: (是否有效, 错误信息)
+        """
+        if not port:
+            return True, ""  # 空字符串将使用默认值
+        try:
+            port_num = int(port)
+            if not (1 <= port_num <= 65535):
+                return False, f"Port must be between 1 and 65535, got {port_num}"
+            return True, ""
+        except ValueError:
+            return False, f"Port must be a number, got '{port}'"
+    
     # ==================== WiFi 配置 ====================
     
     def set_wifi_config(self, ssid: str, password: str) -> bool:
@@ -157,6 +179,12 @@ class NetworkManager:
         
         if not broker:
             self._log_message("Error: MQTT broker address cannot be empty!")
+            return False
+        
+        # 验证端口
+        is_valid, error_msg = self._validate_port(port)
+        if not is_valid:
+            self._log_message(f"Error: {error_msg}")
             return False
         
         if not port:
@@ -585,3 +613,272 @@ class NetworkManager:
         lines.append(f"MQTT Port: {self._mqtt_params.get('port', '1883')}")
         lines.append("=" * 50)
         return "\n".join(lines)
+    
+    # ==================== 阿里云 MQTT 配置 (Sprint 1 新增) ====================
+    
+    def set_aliyun_mqtt_config(
+        self,
+        product_key: str,
+        device_name: str,
+        device_secret: str
+    ) -> bool:
+        """
+        设置阿里云 MQTT 配置 (SET:KNS)
+        
+        Args:
+            product_key: 阿里云产品密钥 (ProductKey)
+            device_name: 设备名称 (DeviceName)
+            device_secret: 设备密钥 (DeviceSecret)
+            
+        Returns:
+            bool: 是否成功启动配置流程
+        """
+        if not self.serial_manager.is_connected:
+            self._log_message("Error: Not connected to serial port!")
+            return False
+        
+        # 导入命令构建函数
+        from .network.cloud_mqtt import build_kns_command
+        
+        # 构建命令
+        valid, error, kns_cmd = build_kns_command(product_key, device_name, device_secret)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        self._log_message(f"Setting Aliyun MQTT: Product={product_key}, Device={device_name}")
+        
+        # 在新线程中发送命令
+        threading.Thread(
+            target=self._send_config_command_thread,
+            args=(kns_cmd, "Aliyun MQTT"),
+            daemon=True
+        ).start()
+        
+        return True
+    
+    def set_mqtt_mode(self, mode: int) -> bool:
+        """
+        设置 MQTT 工作模式 (SET:CMQ)
+        
+        Args:
+            mode: MQTT模式 (1=局域网, 10=阿里云)
+            
+        Returns:
+            bool: 是否成功启动配置流程
+        """
+        if not self.serial_manager.is_connected:
+            self._log_message("Error: Not connected to serial port!")
+            return False
+        
+        # 导入命令构建函数
+        from .network.cloud_mqtt import build_cmq_command, get_mqtt_mode_description
+        
+        # 构建命令
+        valid, error, cmq_cmd = build_cmq_command(mode)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        mode_desc = get_mqtt_mode_description(mode)
+        self._log_message(f"Setting MQTT mode: {mode_desc}")
+        
+        # 在新线程中发送命令
+        threading.Thread(
+            target=self._send_config_command_thread,
+            args=(cmq_cmd, "MQTT Mode"),
+            daemon=True
+        ).start()
+        
+        return True
+    
+    def configure_full_aliyun_mqtt(
+        self,
+        product_key: str,
+        device_name: str,
+        device_secret: str
+    ) -> bool:
+        """
+        配置完整的阿里云 MQTT（KNS + CMQ）
+        
+        这个配置会发送两个命令：
+        1. SET:KNS - 配置阿里云三元组
+        2. SET:CMQ,10 - 切换到阿里云模式
+        
+        Args:
+            product_key: 阿里云产品密钥
+            device_name: 设备名称
+            device_secret: 设备密钥
+            
+        Returns:
+            bool: 是否成功启动配置流程
+        """
+        if not self.serial_manager.is_connected:
+            self._log_message("Error: Not connected to serial port!")
+            return False
+        
+        # 导入命令构建函数
+        from .network.cloud_mqtt import build_aliyun_mqtt_command
+        
+        # 构建命令序列
+        valid, error, commands = build_aliyun_mqtt_command(
+            product_key, device_name, device_secret
+        )
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        self._log_message(f"Configuring Aliyun MQTT (2 commands)...")
+        
+        # 在新线程中发送命令序列
+        threading.Thread(
+            target=self._send_command_sequence_thread,
+            args=(commands, "Aliyun MQTT Full Config"),
+            daemon=True
+        ).start()
+        
+        return True
+    
+    # ==================== 位置和安装配置 (Sprint 1 新增) ====================
+    
+    def set_position_config(
+        self,
+        region: str,
+        building_type: str,
+        user_attr: str,
+        device_name: str
+    ) -> bool:
+        """
+        设置设备位置和属性配置 (SET:PO)
+        
+        Args:
+            region: 行政区划路径，如 "/Shandong/RiZhao/Juxian/Guanbao"
+            building_type: 建筑属性，如 "Zhuzhai"
+            user_attr: 用户属性，如 "Gonglisuo-201202"
+            device_name: 监测仪名称，如 "HLSYZG-01010001"
+            
+        Returns:
+            bool: 是否成功启动配置流程
+        """
+        if not self.serial_manager.is_connected:
+            self._log_message("Error: Not connected to serial port!")
+            return False
+        
+        # 导入命令构建函数
+        from .network.position_config import build_po_command
+        
+        # 构建命令
+        valid, error, po_cmd = build_po_command(region, building_type, user_attr, device_name)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        self._log_message(f"Setting position config: Region={region}, Device={device_name}")
+        
+        # 在新线程中发送命令
+        threading.Thread(
+            target=self._send_config_command_thread,
+            args=(po_cmd, "Position Config"),
+            daemon=True
+        ).start()
+        
+        return True
+    
+    def set_install_mode(self, mode: int) -> bool:
+        """
+        设置传感器安装模式 (SET:ISG)
+        
+        Args:
+            mode: 安装模式 (0-12)
+                  0 = 默认模式
+                  1-2 = 地面安装
+                  3-6 = 侧面安装
+                  7-12 = 顶部安装
+                  
+        Returns:
+            bool: 是否成功启动配置流程
+        """
+        if not self.serial_manager.is_connected:
+            self._log_message("Error: Not connected to serial port!")
+            return False
+        
+        # 导入命令构建函数
+        from .sensors.install_mode import build_isg_command, get_mode_description
+        
+        # 构建命令
+        valid, error, isg_cmd = build_isg_command(mode)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        mode_desc = get_mode_description(mode)
+        self._log_message(f"Setting install mode: {mode} - {mode_desc}")
+        
+        # 在新线程中发送命令
+        threading.Thread(
+            target=self._send_config_command_thread,
+            args=(isg_cmd, "Install Mode"),
+            daemon=True
+        ).start()
+        
+        return True
+    
+    # ==================== 命令序列发送 (辅助方法) ====================
+    
+    def _send_command_sequence_thread(
+        self,
+        commands: list,
+        config_type: str
+    ) -> None:
+        """
+        在线程中发送命令序列
+        
+        Args:
+            commands: 命令字符串列表
+            config_type: 配置类型描述
+        """
+        try:
+            # 停止数据流（如果正在运行）
+            if 'stop_data_stream' in self.callbacks:
+                self.callbacks['stop_data_stream']()
+                time.sleep(1.0)
+            
+            # 清空输入缓冲区
+            if self.serial_manager.serial_port:
+                self.serial_manager.serial_port.reset_input_buffer()
+                time.sleep(Config.BUFFER_CLEAR_DELAY)
+            
+            # 逐个发送命令
+            for i, command in enumerate(commands):
+                self._log_message(f"Sending command {i+1}/{len(commands)}: {command}")
+                
+                success, error = self.serial_manager.send_line(command)
+                if not success:
+                    self._log_message(f"Error sending command {i+1}: {error}")
+                    return
+                
+                # 等待响应
+                time.sleep(2.0)
+                
+                # 读取响应
+                if self.serial_manager.serial_port.in_waiting > 0:
+                    response = self.serial_manager.serial_port.read(
+                        self.serial_manager.serial_port.in_waiting
+                    )
+                    response_str = response.decode("utf-8", errors="ignore").strip()
+                    if response_str:
+                        self._log_message(f"Response {i+1}: {response_str}")
+                
+                # 命令间隔
+                if i < len(commands) - 1:
+                    time.sleep(1.0)
+            
+            self._log_message(f"{config_type} sequence completed!")
+            
+            # 恢复数据流
+            if 'start_data_stream' in self.callbacks:
+                time.sleep(1.0)
+                self.callbacks['start_data_stream']()
+                
+        except Exception as e:
+            self._log_message(f"Error in command sequence: {str(e)}")

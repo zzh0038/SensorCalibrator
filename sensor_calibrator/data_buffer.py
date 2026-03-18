@@ -568,7 +568,7 @@ class SensorDataBuffer:
                 adxl_accel = values[6:9]
                 
                 return mpu_accel, mpu_gyro, adxl_accel
-        except Exception:
+        except (ValueError, TypeError):
             # 数据解析失败（格式错误/无效数据），静默返回 None
             pass
         
