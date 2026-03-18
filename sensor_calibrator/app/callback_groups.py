@@ -216,7 +216,7 @@ class CalibrationCallbacks(CallbackGroup):
             self.app.log_message("Error: No commands to send. Please complete calibration first.")
             return
         
-        if not self.app.ser or not self.app.ser.is_open:
+        if not self.app.serial_manager or not self.app.serial_manager.is_connected:
             self.app.log_message("Error: Not connected to device")
             return
         
@@ -230,13 +230,16 @@ class CalibrationCallbacks(CallbackGroup):
     def send_commands_thread(self, commands):
         """在后台线程发送命令"""
         for cmd in commands:
-            if self.app.ser and self.app.ser.is_open:
-                try:
-                    self.app.ser.write(f"{cmd}\n".encode())
-                    time.sleep(0.1)
-                except Exception as e:
-                    self.app.log_message(f"Error sending command: {e}")
+            try:
+                # 使用 serial_manager 的 send_line 方法（线程安全）
+                success, error = self.app.serial_manager.send_line(cmd)
+                if not success:
+                    self.app.log_message(f"Error sending command '{cmd}': {error}")
                     return
+                time.sleep(0.2)  # 增加延迟确保设备处理完成
+            except Exception as e:
+                self.app.log_message(f"Error sending command: {e}")
+                return
         self.app.log_message(f"Sent {len(commands)} calibration commands to device")
     
     def resend_all_commands(self):
