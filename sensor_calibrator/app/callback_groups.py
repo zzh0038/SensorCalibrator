@@ -121,6 +121,9 @@ class DataStreamCallbacks(CallbackGroup):
             if self.app.data_btn2:
                 self.app.data_btn2.config(text="Stop Data")
             self.app.is_reading = True
+            # 更新 Dashboard 数据流状态
+            if hasattr(self.app, 'stream_status_var') and self.app.stream_status_var:
+                self.app.stream_status_var.set("Running")
             self.app.log_message("Data stream started")
     
     def stop_data_stream(self):
@@ -131,6 +134,9 @@ class DataStreamCallbacks(CallbackGroup):
         if self.app.data_btn2:
             self.app.data_btn2.config(text="Start Data")
         self.app.is_reading = False
+        # 更新 Dashboard 数据流状态
+        if hasattr(self.app, 'stream_status_var') and self.app.stream_status_var:
+            self.app.stream_status_var.set("Stopped")
         self.app.log_message("Data stream stopped")
 
 
@@ -210,7 +216,7 @@ class CalibrationCallbacks(CallbackGroup):
     
     def read_calibration_params(self):
         """读取校准参数"""
-        self.app.serial_manager.send_command("GET:CAL")
+        self.app.read_device_info()
     
     def check_calibration_status(self):
         """检查校准状态"""
@@ -239,15 +245,15 @@ class ActivationCallbacks(CallbackGroup):
     
     def ask_read_properties(self):
         """询问并读取传感器属性"""
-        self.app.activation_workflow.ask_read_properties()
+        self.app.read_sensor_properties()
     
     def read_sensor_properties(self):
         """读取传感器属性"""
-        self.app.activation_workflow.read_sensor_properties()
+        self.app.read_sensor_properties()
     
     def read_device_info(self):
         """读取设备信息"""
-        self.app.activation_workflow.read_device_info()
+        self.app.read_device_info()
     
     def activate_sensor(self):
         """激活传感器"""
@@ -259,11 +265,11 @@ class ActivationCallbacks(CallbackGroup):
     
     def verify_activation_status(self):
         """验证激活状态"""
-        self.app.activation_workflow.verify_activation_status()
+        self.app.verify_activation_status()
     
     def copy_activation_key(self):
         """复制激活密钥"""
-        self.app.activation_workflow.copy_activation_key()
+        self.app.copy_activation_key()
 
 
 class NetworkCallbacks(CallbackGroup):

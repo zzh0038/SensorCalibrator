@@ -308,6 +308,11 @@ class SensorCalibratorApp:
         self.baud_var = self.ui_manager.vars.get('baud')
         self.freq_var = self.ui_manager.vars.get('freq')
         
+        # Dashboard 状态变量
+        self.connection_status_var = self.ui_manager.vars.get('connection_status')
+        self.stream_status_var = self.ui_manager.vars.get('stream_status')
+        self.dashboard_calibration_status_var = self.ui_manager.vars.get('calibration_status')
+        
         # 校准位置变量
         self.position_var = self.ui_manager.vars.get('position')
         
@@ -520,8 +525,17 @@ class SensorCalibratorApp:
         """
         if connected:
             self.ser = self.serial_manager.serial_port
+            # 更新 Dashboard 连接状态
+            if hasattr(self, 'connection_status_var') and self.connection_status_var:
+                self.connection_status_var.set("Connected")
         else:
             self.ser = None
+            # 更新 Dashboard 连接状态
+            if hasattr(self, 'connection_status_var') and self.connection_status_var:
+                self.connection_status_var.set("Disconnected")
+            # 更新 Dashboard 数据流状态
+            if hasattr(self, 'stream_status_var') and self.stream_status_var:
+                self.stream_status_var.set("Stopped")
             # 如果不是用户主动断开（异常断连），显示弹窗
             if not user_initiated:
                 # 使用 after 确保在主线程显示弹窗
@@ -2520,6 +2534,24 @@ class SensorCalibratorApp:
                 self.root.after(0, lambda: self.log_message("Restarting data stream..."))
                 time.sleep(1.0)
                 self.root.after(0, self.start_data_stream)
+
+    def copy_activation_key(self):
+        """复制激活密钥到剪贴板"""
+        if not self.generated_key:
+            self.log_message("Error: No activation key generated. Please read sensor properties first.")
+            return
+        
+        try:
+            # 复制密钥片段到剪贴板
+            key_fragment = self.generated_key[5:12] if len(self.generated_key) >= 12 else self.generated_key[:7]
+            
+            # 使用 tkinter 的剪贴板功能
+            if self.root:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(key_fragment)
+                self.log_message(f"Activation key copied to clipboard: {key_fragment}")
+        except Exception as e:
+            self.log_message(f"Error copying activation key: {str(e)}")
 
     def _auto_save_properties(self):
         """自动保存属性到文件"""
