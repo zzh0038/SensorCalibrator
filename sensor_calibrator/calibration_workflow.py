@@ -181,17 +181,21 @@ class CalibrationWorkflow:
 
     def capture_position(self) -> bool:
         """采集当前位置数据"""
-        if not self._is_calibrating or self._current_position >= 6:
-            return False
+        with self._state_lock:
+            if not self._is_calibrating or self._current_position >= 6 or self._is_paused:
+                if self._is_paused:
+                    self._log_message("校准已暂停，无法采集")
+                return False
+            current_pos = self._current_position  # 在锁内获取位置
 
         self._log_message(
-            f"Capturing data for position {self._current_position + 1}..."
+            f"Capturing data for position {current_pos + 1}..."
         )
 
         # 在新线程中采集数据
         threading.Thread(
             target=self._collect_calibration_data,
-            args=(self._current_position,),
+            args=(current_pos,),
             daemon=True,
         ).start()
 
