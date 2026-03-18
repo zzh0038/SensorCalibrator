@@ -336,6 +336,13 @@ class SensorCalibratorApp:
         # OTA 配置变量
         self.URL1_var = self.ui_manager.vars.get('url1')
         self.URL2_var = self.ui_manager.vars.get('url2')
+        
+        # 记录变量绑定情况（调试用）
+        self.log_message("DEBUG: UI Variables bound:")
+        self.log_message(f"  mac_var: {'OK' if self.mac_var else 'None'}")
+        self.log_message(f"  key_var: {'OK' if self.key_var else 'None'}")
+        self.log_message(f"  ssid_var: {'OK' if self.ssid_var else 'None'}")
+        self.log_message(f"  mqtt_broker_var: {'OK' if self.mqtt_broker_var else 'None'}")
         self.URL3_var = self.ui_manager.vars.get('url3')
         self.URL4_var = self.ui_manager.vars.get('url4')
     
@@ -523,6 +530,10 @@ class SensorCalibratorApp:
             connected: 是否已连接
             user_initiated: 是否为用户主动断开（点击 Disconnect 按钮）
         """
+        # 如果程序正在退出，不处理连接状态变化
+        if self.exiting:
+            return
+            
         if connected:
             self.ser = self.serial_manager.serial_port
             # 更新 Dashboard 连接状态
@@ -536,8 +547,8 @@ class SensorCalibratorApp:
             # 更新 Dashboard 数据流状态
             if hasattr(self, 'stream_status_var') and self.stream_status_var:
                 self.stream_status_var.set("Stopped")
-            # 如果不是用户主动断开（异常断连），显示弹窗
-            if not user_initiated:
+            # 如果不是用户主动断开（异常断连）且程序未在退出，显示弹窗
+            if not user_initiated and not self.exiting:
                 # 使用 after 确保在主线程显示弹窗
                 if self.root:
                     self.root.after(0, self._show_device_disconnected_dialog)
@@ -1830,7 +1841,10 @@ class SensorCalibratorApp:
 
     def _extract_mac_only(self):
         """仅从传感器属性中提取MAC地址并生成密钥（不处理激活状态）"""
+        self.log_message("DEBUG: _extract_mac_only called")
+        
         if not self.sensor_properties:
+            self.log_message("DEBUG: sensor_properties is empty")
             return
 
         if "sys" in self.sensor_properties:
@@ -1839,6 +1853,7 @@ class SensorCalibratorApp:
             for key in mac_keys:
                 if key in sys_info:
                     self.mac_address = sys_info[key]
+                    self.log_message(f"DEBUG: Found MAC address: {self.mac_address} (key: {key})")
                     break
 
         if self.mac_address:
@@ -1853,11 +1868,21 @@ class SensorCalibratorApp:
                 # 更新 UI 显示
                 if self.mac_var:
                     self.mac_var.set(self.mac_address)
+                    self.log_message(f"DEBUG: Updated mac_var with {self.mac_address}")
+                else:
+                    self.log_message("DEBUG: mac_var is None, cannot update UI")
+                    
                 if self.key_var and self.generated_key:
                     # 显示密钥片段（7位：generated_key[5:12]）
                     key_display = self.generated_key[5:12] if len(self.generated_key) >= 12 else self.generated_key[:7]
                     self.key_var.set(key_display)
-            # 注意：激活状态检查已移除此方法，请使用 verify_activation_status() 单独验证
+                    self.log_message(f"DEBUG: Updated key_var with {key_display}")
+                else:
+                    self.log_message(f"DEBUG: key_var is None or generated_key is empty")
+            else:
+                self.log_message(f"DEBUG: MAC address format invalid: {cleaned_mac}")
+        else:
+            self.log_message("DEBUG: MAC address not found in sensor properties")
 
     def _extract_and_process_mac(self):
         """提取MAC地址并处理激活逻辑（用于独立的激活验证流程）"""
@@ -2081,20 +2106,30 @@ class SensorCalibratorApp:
 
     def _extract_network_config(self):
         """从传感器属性中提取网络配置"""
+        self.log_message("DEBUG: _extract_network_config called")
+        
         if not self.sensor_properties:
+            self.log_message("DEBUG: sensor_properties is empty")
             return
 
         if "sys" in self.sensor_properties:
             sys_info = self.sensor_properties["sys"]
+            self.log_message(f"DEBUG: Extracting network config from {len(sys_info)} fields")
 
             ssid = sys_info.get("SSID", "")
             password = sys_info.get("PA", "")
             if ssid:
                 self.wifi_params = {"ssid": ssid, "password": password}
-                if hasattr(self, 'ssid_var'):
+                self.log_message(f"DEBUG: Found WiFi SSID: {ssid}")
+                if hasattr(self, 'ssid_var') and self.ssid_var:
                     self.ssid_var.set(ssid)
-                if hasattr(self, 'password_var'):
+                    self.log_message("DEBUG: Updated ssid_var")
+                else:
+                    self.log_message("DEBUG: ssid_var is None")
+                if hasattr(self, 'password_var') and self.password_var:
                     self.password_var.set(password)
+            else:
+                self.log_message("DEBUG: WiFi SSID not found in properties")
 
             broker = sys_info.get("MBR", "")
             username = sys_info.get("MUS", "")
@@ -2103,14 +2138,14 @@ class SensorCalibratorApp:
 
             if broker:
                 self.mqtt_params = {"broker": broker, "username": username, "password": mqtt_password, "port": str(port)}
-                if hasattr(self, 'mqtt_broker_var'):
+                self.log_message(f"DEBUG: Found MQTT broker: {broker}")
+                if hasattr(self, 'mqtt_broker_var') and self.mqtt_broker_var:
                     self.mqtt_broker_var.set(broker)
-                if hasattr(self, 'mqtt_user_var'):
-                    self.mqtt_user_var.set(username)
-                if hasattr(self, 'mqtt_password_var'):
-                    self.mqtt_password_var.set(mqtt_password)
-                if hasattr(self, 'mqtt_port_var'):
-                    self.mqtt_port_var.set(str(port))
+                    self.log_message("DEBUG: Updated mqtt_broker_var")
+                else:
+                    self.log_message("DEBUG: mqtt_broker_var is None")
+            else:
+                self.log_message("DEBUG: MQTT broker not found in properties")
 
             # OTA URL 配置
             url1 = sys_info.get("URL1", "")
@@ -2119,14 +2154,10 @@ class SensorCalibratorApp:
             url4 = sys_info.get("URL4", "")
             
             self.ota_params = {"URL1": url1, "URL2": url2, "URL3": url3, "URL4": url4}
-            if hasattr(self, 'URL1_var'):
-                self.URL1_var.set(url1)
-            if hasattr(self, 'URL2_var'):
-                self.URL2_var.set(url2)
-            if hasattr(self, 'URL3_var'):
-                self.URL3_var.set(url3)
-            if hasattr(self, 'URL4_var'):
-                self.URL4_var.set(url4)
+            if url1:
+                self.log_message(f"DEBUG: Found OTA URL1: {url1[:30]}...")
+        else:
+            self.log_message("DEBUG: No 'sys' field in sensor_properties")
 
         self.root.after(0, self.enable_config_buttons)
 
