@@ -127,6 +127,7 @@ class CalibrationCallbacks(CallbackGroup):
     
     CALLBACK_NAMES = [
         'start_calibration', 'capture_position', 'finish_calibration',
+        'pause_calibration', 'reset_calibration',
         'generate_calibration_commands', 'send_all_commands', 'resend_all_commands',
         'save_calibration_parameters', 'load_calibration_parameters',
         'read_calibration_params', 'check_calibration_status',
@@ -137,6 +138,8 @@ class CalibrationCallbacks(CallbackGroup):
             'start_calibration': self.start_calibration,
             'capture_position': self.capture_position,
             'finish_calibration': self.finish_calibration,
+            'pause_calibration': self.pause_calibration,
+            'reset_calibration': self.reset_calibration,
             'generate_calibration_commands': self.generate_calibration_commands,
             'send_all_commands': self.send_all_commands,
             'resend_all_commands': self.resend_all_commands,
@@ -148,11 +151,44 @@ class CalibrationCallbacks(CallbackGroup):
     
     def start_calibration(self):
         """开始六位置校准"""
+        # 读取自动引导设置
+        auto_guide = self.app.ui_manager.vars.get('cal_auto_guide')
+        if auto_guide:
+            enabled = auto_guide.get() == "1"
+            self.app.calibration_workflow.set_auto_advance(enabled)
+        
         self.app.calibration_workflow.start_calibration()
+        
+        # 更新UI显示
+        if self.app.ui_manager:
+            self.app.ui_manager.reset_calibration_display()
+            self.app.ui_manager.set_widget_state('cal_capture_position_btn', 'normal')
+            self.app.ui_manager.set_widget_state('cal_pause_calibration_btn', 'normal')
+            self.app.ui_manager.set_widget_state('cal_reset_calibration_btn', 'normal')
     
     def capture_position(self):
         """捕获当前位置"""
         self.app.calibration_workflow.capture_position()
+    
+    def pause_calibration(self):
+        """暂停/继续校准"""
+        workflow = self.app.calibration_workflow
+        btn = self.app.ui_manager.widgets.get('cal_pause_calibration_btn')
+        
+        if workflow.is_paused:
+            workflow.resume()
+            if btn:
+                btn.config(text="Pause")
+        else:
+            workflow.pause()
+            if btn:
+                btn.config(text="Resume")
+    
+    def reset_calibration(self):
+        """重置校准"""
+        self.app.calibration_workflow.reset()
+        if self.app.ui_manager:
+            self.app.ui_manager.reset_calibration_display()
     
     def finish_calibration(self):
         """完成校准"""

@@ -463,7 +463,7 @@ class SensorCalibratorApp:
         self.network_manager.ota_params = self.ota_params
 
     def _init_calibration_workflow(self):
-        """初始化校准工作流"""
+        """初始化校准工作流（含实时进度回调）"""
         callbacks = {
             'log_message': self.log_message,
             'parse_sensor_data': self.parse_sensor_data,
@@ -471,6 +471,11 @@ class SensorCalibratorApp:
             'on_calibration_finished': self._on_calibration_finished,
             'on_calibration_error': self._on_calibration_error,
             'on_capture_error': self._on_capture_error,
+            # 新增实时回调
+            'on_collection_start': self._on_collection_start,
+            'on_progress': self._on_collection_progress,
+            'on_quality_update': self._on_quality_update,
+            'on_collection_complete': self._on_collection_complete,
         }
         self.calibration_workflow = CalibrationWorkflow(self.data_queue, callbacks)
 
@@ -559,6 +564,13 @@ class SensorCalibratorApp:
         if self.capture_btn:
             self.capture_btn.config(state="normal")
         self.update_position_display()
+        
+        # 更新2D可视化和进度
+        if self.ui_manager:
+            if next_position < 6:
+                self.ui_manager.update_calibration_visual(next_position)
+            # 更新总体进度
+            self.ui_manager.vars['cal_progress'].set(f"{next_position}/6")
 
     def _on_calibration_finished(self, params: dict):
         """校准完成回调"""
@@ -596,6 +608,63 @@ class SensorCalibratorApp:
         """采集错误回调"""
         if self.capture_btn:
             self.capture_btn.config(state="normal")
+        # 清除进度显示
+        if self.ui_manager:
+            self.ui_manager.clear_collection_progress()
+    
+    def _on_collection_start(self, position: int, max_samples: int):
+        """
+        采集开始回调
+        
+        Args:
+            position: 当前位置索引
+            max_samples: 目标样本数
+        """
+        # 更新UI状态
+        if self.ui_manager:
+            self.ui_manager.update_position_status(position, 'collecting')
+            self.ui_manager.update_collection_progress(0, max_samples)
+        
+        self.log_message(f"开始采集位置 {position + 1} 的数据（目标 {max_samples} 样本）")
+    
+    def _on_collection_progress(self, position: int, current: int, total: int):
+        """
+        采集进度回调
+        
+        Args:
+            position: 当前位置索引
+            current: 当前样本数
+            total: 目标样本数
+        """
+        # 使用 after() 确保在主线程更新UI
+        if self.root and self.ui_manager:
+            self.root.after(0, lambda: self.ui_manager.update_collection_progress(current, total))
+    
+    def _on_quality_update(self, position: int, score: int, std_mean: float):
+        """
+        数据质量更新回调
+        
+        Args:
+            position: 当前位置索引
+            score: 质量评分 (0-100)
+            std_mean: 平均标准差
+        """
+        if self.root and self.ui_manager:
+            self.root.after(0, lambda: self.ui_manager.update_quality_display(score, std_mean))
+    
+    def _on_collection_complete(self, position: int, samples_collected: int):
+        """
+        采集完成回调
+        
+        Args:
+            position: 当前位置索引
+            samples_collected: 实际采集样本数
+        """
+        if self.ui_manager:
+            self.ui_manager.update_position_status(position, 'completed')
+            self.ui_manager.clear_collection_progress()
+        
+        self.log_message(f"位置 {position + 1} 采集完成，共 {samples_collected} 个样本")
 
     def _on_wifi_config_loaded(self, params: dict):
         """WiFi配置加载回调"""

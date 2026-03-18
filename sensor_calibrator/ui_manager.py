@@ -13,6 +13,7 @@ from typing import Dict, Callable, Optional, Any
 
 from . import Config, SerialConfig
 from .ui.theme import theme_manager, LightTheme
+from .ui.calibration_visualizer import CalibrationVisualizer2D, CalibrationPositionIndicator
 
 
 class UIManager:
@@ -1484,7 +1485,7 @@ class UIManager:
         self.widgets['force_esp32_ota_btn'] = esp32_ota_btn
     
     def _setup_calibration_tab(self, parent):
-        """Calibration标签页 - 完整的六位置校准流程"""
+        """Calibration标签页 - 完整的六位置校准流程（含2D可视化）"""
         t = LightTheme
         
         main_frame = tk.Frame(parent, bg=t.BG_MAIN)
@@ -1536,20 +1537,125 @@ class UIManager:
         
         tk.Label(
             progress_row,
-            text="Progress:",
+            text="Overall:",
             bg=t.BG_CARD,
             fg=t.TEXT_PRIMARY,
             font=("Segoe UI", 9)
         ).pack(side="left")
         
-        self.vars['cal_progress'] = StringVar(value="0%")
+        self.vars['cal_progress'] = StringVar(value="0/6")
         tk.Label(
             progress_row,
             textvariable=self.vars['cal_progress'],
             bg=t.BG_CARD,
             fg=t.PRIMARY,
             font=("Segoe UI", 9, "bold")
-        ).pack(side="right")
+        ).pack(side="left", padx=(5, 20))
+        
+        # 当前位置采集进度
+        tk.Label(
+            progress_row,
+            text="Collecting:",
+            bg=t.BG_CARD,
+            fg=t.TEXT_SECONDARY,
+            font=("Segoe UI", 9)
+        ).pack(side="left")
+        
+        self.vars['cal_collect_progress'] = StringVar(value="--")
+        tk.Label(
+            progress_row,
+            textvariable=self.vars['cal_collect_progress'],
+            bg=t.BG_CARD,
+            fg=t.INFO,
+            font=("Segoe UI", 9, "bold")
+        ).pack(side="left", padx=5)
+        
+        # 数据质量显示
+        tk.Label(
+            progress_row,
+            text="Quality:",
+            bg=t.BG_CARD,
+            fg=t.TEXT_SECONDARY,
+            font=("Segoe UI", 9)
+        ).pack(side="left", padx=(20, 0))
+        
+        self.vars['cal_quality'] = StringVar(value="--")
+        self.widgets['cal_quality_lbl'] = tk.Label(
+            progress_row,
+            textvariable=self.vars['cal_quality'],
+            bg=t.BG_CARD,
+            fg='#cccccc',
+            font=("Segoe UI", 9, "bold")
+        )
+        self.widgets['cal_quality_lbl'].pack(side="left", padx=5)
+        
+        # === 2D可视化指引 ===
+        visual_card = tk.LabelFrame(
+            main_frame,
+            text=" Position Guide ",
+            bg=t.BG_CARD,
+            fg=t.TEXT_PRIMARY,
+            font=("Segoe UI", 10, "bold"),
+            padx=10,
+            pady=10
+        )
+        visual_card.pack(fill="x", pady=10)
+        
+        # 水平布局：左侧2D图，右侧文字说明
+        visual_frame = tk.Frame(visual_card, bg=t.BG_CARD)
+        visual_frame.pack(fill="x", pady=5)
+        
+        # 左侧：Canvas 2D可视化
+        canvas_frame = tk.Frame(visual_frame, bg=t.BG_CARD, width=220, height=220)
+        canvas_frame.pack(side="left", padx=10)
+        canvas_frame.pack_propagate(False)  # 固定大小
+        
+        self.widgets['cal_visual_canvas'] = tk.Canvas(
+            canvas_frame,
+            width=200,
+            height=200,
+            bg=t.BG_CARD,
+            highlightthickness=1,
+            highlightbackground="#cccccc"
+        )
+        self.widgets['cal_visual_canvas'].pack(expand=True)
+        
+        # 创建可视化器实例（稍后初始化）
+        self.cal_visualizer = None
+        
+        # 右侧：文字说明
+        text_frame = tk.Frame(visual_frame, bg=t.BG_CARD)
+        text_frame.pack(side="left", fill="both", expand=True, padx=10)
+        
+        self.vars['cal_position_desc'] = StringVar(value="准备开始校准")
+        self.vars['cal_position_tip'] = StringVar(value="点击 'Start Calibration' 开始")
+        
+        tk.Label(
+            text_frame,
+            textvariable=self.vars['cal_position_desc'],
+            bg=t.BG_CARD,
+            fg=t.TEXT_PRIMARY,
+            font=("Segoe UI", 11, "bold"),
+            wraplength=200
+        ).pack(anchor="w", pady=(10, 5))
+        
+        tk.Label(
+            text_frame,
+            text="操作提示：",
+            bg=t.BG_CARD,
+            fg=t.TEXT_SECONDARY,
+            font=("Segoe UI", 9, "bold")
+        ).pack(anchor="w", pady=(10, 2))
+        
+        tk.Label(
+            text_frame,
+            textvariable=self.vars['cal_position_tip'],
+            bg=t.BG_CARD,
+            fg=t.INFO,
+            font=("Segoe UI", 9),
+            wraplength=200,
+            justify="left"
+        ).pack(anchor="w")
         
         # === 当前位置操作 ===
         current_card = tk.LabelFrame(
@@ -1572,14 +1678,33 @@ class UIManager:
             font=("Segoe UI", 10)
         ).pack(pady=5)
         
+        # 自动引导选项
+        auto_guide_frame = tk.Frame(current_card, bg=t.BG_CARD)
+        auto_guide_frame.pack(fill="x", pady=5)
+        
+        self.vars['cal_auto_guide'] = StringVar(value="0")  # 0=关闭, 1=开启
+        auto_guide_cb = tk.Checkbutton(
+            auto_guide_frame,
+            text="Auto Guide (自动进入下一步)",
+            variable=self.vars['cal_auto_guide'],
+            bg=t.BG_CARD,
+            fg=t.TEXT_PRIMARY,
+            font=("Segoe UI", 9),
+            selectcolor=t.BG_CARD,
+            activebackground=t.BG_CARD
+        )
+        auto_guide_cb.pack(side="left")
+        self.widgets['cal_auto_guide_cb'] = auto_guide_cb
+        
         # 控制按钮
         btn_frame = tk.Frame(current_card, bg=t.BG_CARD)
         btn_frame.pack(fill="x", pady=10)
         
         buttons = [
-            ("Start Calibration", "start_calibration", t.PRIMARY),
+            ("Start", "start_calibration", t.PRIMARY),
             ("Capture", "capture_position", t.SUCCESS),
-            ("Finish", "finish_calibration", t.WARNING),
+            ("Pause", "pause_calibration", t.WARNING),
+            ("Reset", "reset_calibration", t.ERROR),
         ]
         
         for text, key, color in buttons:
@@ -1591,13 +1716,16 @@ class UIManager:
                 fg=t.TEXT_ON_PRIMARY,
                 font=("Segoe UI", 9),
                 relief="flat",
-                padx=20,
+                padx=15,
                 pady=8,
                 cursor="hand2",
                 state="disabled"
             )
-            btn.pack(side="left", expand=True, fill="x", padx=5)
+            btn.pack(side="left", expand=True, fill="x", padx=3)
             self.widgets[f'cal_{key}_btn'] = btn
+        
+        # 初始化可视化器
+        self._init_cal_visualizer()
         
         # === 校准命令操作 ===
         cmd_card = tk.LabelFrame(
@@ -1636,6 +1764,134 @@ class UIManager:
             )
             btn.pack(side="left", expand=True, fill="x", padx=3)
             self.widgets[f'cal_{key}_btn'] = btn
+    
+    # ============================================================================
+    # 校准可视化相关方法
+    # ============================================================================
+    
+    def _init_cal_visualizer(self):
+        """初始化校准可视化器"""
+        canvas = self.widgets.get('cal_visual_canvas')
+        if canvas:
+            self.cal_visualizer = CalibrationVisualizer2D(canvas)
+            # 默认显示第一个位置
+            self.cal_visualizer.set_position(0)
+            self._update_cal_position_display(0)
+    
+    def update_calibration_visual(self, position_idx: int):
+        """
+        更新校准可视化显示
+        
+        Args:
+            position_idx: 位置索引 (0-5)
+        """
+        if self.cal_visualizer and 0 <= position_idx <= 5:
+            self.cal_visualizer.set_position(position_idx)
+            self._update_cal_position_display(position_idx)
+    
+    def _update_cal_position_display(self, position_idx: int):
+        """更新位置显示文字"""
+        if self.cal_visualizer:
+            desc = self.cal_visualizer.get_current_description()
+            tip = self.cal_visualizer.get_current_tip()
+            self.vars['cal_position_desc'].set(desc)
+            self.vars['cal_position_tip'].set(tip)
+    
+    def update_position_status(self, position_idx: int, status: str):
+        """
+        更新位置状态指示器
+        
+        Args:
+            position_idx: 位置索引 (0-5)
+            status: 'pending', 'collecting', 'completed', 'error'
+        """
+        status_lbl = self.widgets.get(f'cal_pos_{position_idx}_status')
+        if status_lbl:
+            colors = {
+                'pending': '#cccccc',
+                'collecting': '#ffcc00',
+                'completed': '#44aa44',
+                'error': '#ff4444',
+            }
+            symbols = {
+                'pending': '○',
+                'collecting': '◐',
+                'completed': '●',
+                'error': '✗',
+            }
+            status_lbl.config(
+                text=symbols.get(status, '○'),
+                fg=colors.get(status, '#cccccc')
+            )
+    
+    def reset_calibration_display(self):
+        """重置校准显示到初始状态"""
+        if self.cal_visualizer:
+            self.cal_visualizer.set_position(0)
+            self._update_cal_position_display(0)
+        # 重置所有位置状态
+        for i in range(6):
+            self.update_position_status(i, 'pending')
+        self.vars['cal_progress'].set("0/6")
+        self.vars['cal_collect_progress'].set("--")
+        self.vars['cal_quality'].set("--")
+        self._set_quality_color('pending')
+    
+    def update_collection_progress(self, current: int, total: int):
+        """
+        更新采集进度显示
+        
+        Args:
+            current: 当前样本数
+            total: 目标样本数
+        """
+        self.vars['cal_collect_progress'].set(f"{current}/{total}")
+        
+    def update_quality_display(self, score: int, std_mean: float):
+        """
+        更新数据质量显示
+        
+        Args:
+            score: 质量评分 (0-100)
+            std_mean: 平均标准差
+        """
+        # 根据分数设置文字
+        if score >= 90:
+            text = f"Excellent {score}"
+            color = 'excellent'
+        elif score >= 70:
+            text = f"Good {score}"
+            color = 'good'
+        elif score >= 50:
+            text = f"Fair {score}"
+            color = 'fair'
+        else:
+            text = f"Poor {score}"
+            color = 'poor'
+        
+        self.vars['cal_quality'].set(text)
+        self._set_quality_color(color)
+        
+    def _set_quality_color(self, quality: str):
+        """设置质量标签颜色"""
+        lbl = self.widgets.get('cal_quality_lbl')
+        if not lbl:
+            return
+            
+        colors = {
+            'pending': '#cccccc',
+            'excellent': '#44aa44',  # 绿色
+            'good': '#66cc66',       # 浅绿
+            'fair': '#ffcc00',       # 黄色
+            'poor': '#ff4444',       # 红色
+        }
+        lbl.config(fg=colors.get(quality, '#cccccc'))
+    
+    def clear_collection_progress(self):
+        """清除采集进度显示"""
+        self.vars['cal_collect_progress'].set("--")
+        self.vars['cal_quality'].set("--")
+        self._set_quality_color('pending')
     
     # ============================================================================
     # 公共方法

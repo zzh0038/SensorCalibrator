@@ -52,12 +52,23 @@ class CalibrationWorkflow:
                 - 'update_position_display': 更新位置显示
                 - 'send_ss_command': 发送SS命令
                 - 'update_ui_state': 更新UI状态
+                
+                # 新增实时回调（可选）
+                - 'on_collection_start': 采集开始 (position, max_samples)
+                - 'on_progress': 进度更新 (position, current, total)
+                - 'on_quality_update': 质量更新 (position, score, std_mean)
+                - 'on_collection_complete': 采集完成 (position, samples_collected)
+                - 'on_capture_error': 采集错误
+                - 'on_position_captured': 位置完成 (next_position)
+                - 'on_calibration_finished': 校准完成 (params)
+                - 'on_calibration_error': 校准错误
         """
         self.data_queue = data_queue
         self.callbacks = callbacks
 
         # 校准状态
         self._is_calibrating = False
+        self._is_paused = False
         self._current_position = 0
         self._calibration_positions = []
         self._calibration_samples = Config.CALIBRATION_SAMPLES
@@ -70,6 +81,10 @@ class CalibrationWorkflow:
 
         # 校准参数
         self._calibration_params = None
+        
+        # 自动引导设置
+        self.auto_advance = False
+        self.auto_advance_delay = 1.0  # 延迟1秒自动进入下一步
 
     # ==================== 属性 ====================
 
@@ -98,6 +113,12 @@ class CalibrationWorkflow:
             if self._current_position < 6:
                 return f"Position {self._current_position + 1}/6: {self.position_names[self._current_position]}"
             return "Calibration complete!"
+    
+    @property
+    def is_paused(self) -> bool:
+        """是否已暂停（线程安全）"""
+        with self._state_lock:
+            return self._is_paused
 
     # ==================== 校准流程控制 ====================
 
@@ -126,9 +147,37 @@ class CalibrationWorkflow:
         """重置校准状态"""
         with self._state_lock:
             self._is_calibrating = False
+            self._is_paused = False
             self._current_position = 0
             self._calibration_positions = []
             self._calibration_params = None
+
+    def pause(self) -> None:
+        """暂停校准流程"""
+        with self._state_lock:
+            self._is_paused = True
+        self._log_message("校准已暂停")
+
+    def resume(self) -> None:
+        """恢复校准流程"""
+        with self._state_lock:
+            self._is_paused = False
+        self._log_message("校准已恢复")
+
+    def set_auto_advance(self, enabled: bool, delay: float = 1.0) -> None:
+        """
+        设置自动引导模式
+        
+        Args:
+            enabled: 是否启用自动进入下一步
+            delay: 延迟时间（秒）
+        """
+        self.auto_advance = enabled
+        self.auto_advance_delay = delay
+        if enabled:
+            self._log_message(f"已启用自动引导模式（延迟 {delay} 秒）")
+        else:
+            self._log_message("已禁用自动引导模式")
 
     def capture_position(self) -> bool:
         """采集当前位置数据"""
@@ -150,11 +199,12 @@ class CalibrationWorkflow:
 
     def _collect_calibration_data(self, position: int) -> None:
         """
-        采集校准数据 - 优化版本（预分配数组）
+        采集校准数据 - 优化版本（预分配数组 + 进度回调）
         
         优化点：
         - 使用预分配 numpy 数组避免动态扩容开销
         - 使用索引直接赋值代替 list.append
+        - 批量进度回调，减少UI刷新频率（每10个样本）
         """
         try:
             # 优化：预分配 numpy 数组（避免 list 动态扩容）
@@ -165,6 +215,12 @@ class CalibrationWorkflow:
 
             start_time = time.time()
             samples_collected = 0
+            last_progress_update = 0
+            last_quality_update = 0
+
+            # 通知开始采集
+            if "on_collection_start" in self.callbacks:
+                self.callbacks["on_collection_start"](position, max_samples)
 
             # 采集数据
             while (
@@ -185,6 +241,22 @@ class CalibrationWorkflow:
                             mpu_gyro_samples[samples_collected] = mpu_gyro
                             adxl_accel_samples[samples_collected] = adxl_accel
                             samples_collected += 1
+                            
+                            # 批量更新进度（每10个样本）
+                            if (samples_collected - last_progress_update >= 10 
+                                and "on_progress" in self.callbacks):
+                                self.callbacks["on_progress"](position, samples_collected, max_samples)
+                                last_progress_update = samples_collected
+                            
+                            # 批量更新数据质量（每20个样本）
+                            if (samples_collected - last_quality_update >= 20
+                                and "on_quality_update" in self.callbacks):
+                                # 计算当前质量（使用最近20个样本）
+                                start_idx = max(0, samples_collected - 20)
+                                recent_std = np.std(mpu_accel_samples[start_idx:samples_collected], axis=0)
+                                quality_score = self._calculate_quality_score(recent_std)
+                                self.callbacks["on_quality_update"](position, quality_score, float(np.mean(recent_std)))
+                                last_quality_update = samples_collected
 
                     # 超时保护
                     if time.time() - start_time > 10:
@@ -200,6 +272,10 @@ class CalibrationWorkflow:
                     self._log_message(f"Error collecting calibration data: {e}")
                     time.sleep(Config.QUICK_SLEEP)
                     continue
+            
+            # 通知采集完成
+            if "on_collection_complete" in self.callbacks:
+                self.callbacks["on_collection_complete"](position, samples_collected)
 
             min_required_samples = int(
                 Config.CALIBRATION_SAMPLES * Config.MIN_CALIBRATION_SAMPLE_RATIO
@@ -285,8 +361,42 @@ class CalibrationWorkflow:
             )
             if "on_position_captured" in self.callbacks:
                 self.callbacks["on_position_captured"](next_position)
+            
+            # 自动引导模式：延迟后自动采集下一个位置
+            if self.auto_advance and not self._is_paused:
+                self._log_message(f"自动引导：{self.auto_advance_delay} 秒后开始采集位置 {next_position + 1}")
+                # 在新线程中执行延迟，避免阻塞
+                threading.Thread(
+                    target=self._auto_advance_to_next,
+                    args=(next_position,),
+                    daemon=True
+                ).start()
         else:
             self.finish_calibration()
+    
+    def _auto_advance_to_next(self, position: int):
+        """
+        自动进入下一个位置的延迟执行
+        
+        Args:
+            position: 目标位置索引
+        """
+        # 延迟等待
+        time.sleep(self.auto_advance_delay)
+        
+        # 在锁内读取状态，避免竞态条件
+        with self._state_lock:
+            is_calibrating = self._is_calibrating
+            is_paused = self._is_paused
+            current_position = self._current_position
+        
+        # 检查是否仍然处于校准状态且未被暂停
+        if is_calibrating and not is_paused:
+            if current_position == position:
+                self._log_message(f"自动采集位置 {position + 1}")
+                self.capture_position()
+        elif is_paused:
+            self._log_message("校准已暂停，自动引导等待恢复...")
 
     def finish_calibration(self) -> None:
         """完成校准并计算参数（线程安全）"""
@@ -442,6 +552,36 @@ class CalibrationWorkflow:
             return False
 
     # ==================== 辅助方法 ====================
+
+    def _calculate_quality_score(self, std_values) -> int:
+        """
+        计算数据质量评分
+        
+        评分标准：
+        - 90-100: 优秀 (平均标准差 < 0.01)
+        - 70-89:  良好 (平均标准差 < 0.05)
+        - 50-69:  一般 (平均标准差 < 0.1)
+        - < 50:   差 (平均标准差 >= 0.1)
+        
+        Args:
+            std_values: 三轴标准差数组
+            
+        Returns:
+            质量评分 (0-100)
+        """
+        mean_std = float(np.mean(std_values))
+        
+        if mean_std < 0.01:
+            score = 90 + int((0.01 - mean_std) * 1000)
+            return min(100, score)
+        elif mean_std < 0.05:
+            score = 70 + int((0.05 - mean_std) * 500)
+            return min(89, score)
+        elif mean_std < 0.1:
+            score = 50 + int((0.1 - mean_std) * 400)
+            return min(69, score)
+        else:
+            return max(0, 50 - int((mean_std - 0.1) * 100))
 
     def _log_message(self, message: str) -> None:
         """记录日志（通过回调）"""

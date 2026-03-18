@@ -23,7 +23,8 @@ class TestUIWidgetsExist(unittest.TestCase):
         self.assertIn("set_position_btn", source)
         self.assertIn("set_install_mode_btn", source)
         
-        source = inspect.getsource(UIManager._setup_system_tab)
+        # System 控制按钮在 _setup_control_tab 中
+        source = inspect.getsource(UIManager._setup_control_tab)
         self.assertIn("save_sensor_config_btn", source)
         self.assertIn("restore_default_btn", source)
         self.assertIn("deactivate_sensor_btn", source)
@@ -33,8 +34,8 @@ class TestUIWidgetsExist(unittest.TestCase):
         from sensor_calibrator.ui_manager import UIManager
         import inspect
         
-        # Advanced tab
-        source = inspect.getsource(UIManager._setup_advanced_tab)
+        # Filter tab (滤波器)
+        source = inspect.getsource(UIManager._setup_filter_tab)
         self.assertIn("set_kalman_filter_btn", source)
         self.assertIn("filter_on_btn", source)
         self.assertIn("filter_off_btn", source)
@@ -50,8 +51,8 @@ class TestUIWidgetsExist(unittest.TestCase):
         self.assertIn("set_tme_btn", source)
         self.assertIn("set_magof_btn", source)
         
-        # Debug tab
-        source = inspect.getsource(UIManager._setup_debug_tab)
+        # Debug 按钮在 _setup_control_tab 中
+        source = inspect.getsource(UIManager._setup_control_tab)
         self.assertIn("cpu_monitor_btn", source)
         self.assertIn("sensor_cal_btn", source)
         self.assertIn("buzzer_btn", source)
@@ -75,8 +76,11 @@ class TestUIWidgetsExist(unittest.TestCase):
         self.assertIn("reboot_camera_module_btn", source)
         self.assertIn("toggle_camera_stream_btn", source)
         self.assertIn("toggle_push_stream_btn", source)
-        self.assertIn("force_camera_ota_btn", source)
-        self.assertIn("force_esp32_ota_btn", source)
+        
+        # Camera OTA 按钮在 _setup_ota_tab 中
+        ota_source = inspect.getsource(UIManager._setup_ota_tab)
+        self.assertIn("force_camera_ota_btn", ota_source)
+        self.assertIn("force_esp32_ota_btn", ota_source)
 
 
 class TestCallbacksExist(unittest.TestCase):

@@ -285,8 +285,8 @@ class TestUIManagerIntegration(unittest.TestCase):
         self.assertTrue(hasattr(UIManager, '_setup_dashboard_tab'))
         self.assertTrue(hasattr(UIManager, '_setup_network_tab'))
         self.assertTrue(hasattr(UIManager, '_setup_sensors_tab'))
-        self.assertTrue(hasattr(UIManager, '_setup_system_main_tab'))
-        self.assertTrue(hasattr(UIManager, '_setup_calibration_main_tab'))
+        self.assertTrue(hasattr(UIManager, '_setup_system_tab'))
+        self.assertTrue(hasattr(UIManager, '_setup_calibration_tab'))
         
         # 二级标签页方法
         self.assertTrue(hasattr(UIManager, '_setup_cloud_tab'))
@@ -306,7 +306,7 @@ class TestUIManagerIntegration(unittest.TestCase):
         self.assertIn('_setup_position_tab', network_source)
         
         # System 主标签页包含二级标签
-        system_source = inspect.getsource(UIManager._setup_system_main_tab)
+        system_source = inspect.getsource(UIManager._setup_system_tab)
         self.assertIn('_setup_camera_tab', system_source)
 
 
