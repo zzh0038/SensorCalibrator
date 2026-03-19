@@ -385,7 +385,7 @@ class NetworkCallbacks(CallbackGroup):
         'set_wifi_config', 'read_wifi_config', 'set_mqtt_config', 'read_mqtt_config',
         'set_ota_config', 'read_ota_config', 'set_alarm_threshold',
         'set_aliyun_mqtt_config', 'set_mqtt_local_mode', 'set_mqtt_aliyun_mode',
-        'set_position_config',
+        'set_position_config', 'set_install_mode',
     ]
     
     def register_all(self) -> Dict[str, callable]:
@@ -401,51 +401,98 @@ class NetworkCallbacks(CallbackGroup):
             'set_mqtt_local_mode': self.set_mqtt_local_mode,
             'set_mqtt_aliyun_mode': self.set_mqtt_aliyun_mode,
             'set_position_config': self.set_position_config,
+            'set_install_mode': self.set_install_mode,
         }
     
     def set_wifi_config(self):
-        """设置 WiFi 配置"""
-        self.app.network_manager.set_wifi_config()
+        """设置 WiFi 配置 - 从 UI 获取参数"""
+        ssid = self.app.ui_manager.get_entry_value('ssid')
+        password = self.app.ui_manager.get_entry_value('password')
+        
+        if not ssid:
+            self.app.log_message("Error: WiFi SSID cannot be empty!")
+            return
+        
+        self.app.network_manager.set_wifi_config(ssid, password)
     
     def read_wifi_config(self):
         """读取 WiFi 配置"""
         self.app.network_manager.read_wifi_config()
     
     def set_mqtt_config(self):
-        """设置 MQTT 配置"""
-        self.app.network_manager.set_mqtt_config()
+        """设置 MQTT 配置 - 从 UI 获取参数"""
+        broker = self.app.ui_manager.get_entry_value('mqtt_broker')
+        username = self.app.ui_manager.get_entry_value('mqtt_user')
+        password = self.app.ui_manager.get_entry_value('mqtt_password')
+        port = self.app.ui_manager.get_entry_value('mqtt_port')
+        
+        if not broker:
+            self.app.log_message("Error: MQTT broker cannot be empty!")
+            return
+        
+        self.app.network_manager.set_mqtt_config(broker, username, password, port)
     
     def read_mqtt_config(self):
         """读取 MQTT 配置"""
         self.app.network_manager.read_mqtt_config()
     
     def set_ota_config(self):
-        """设置 OTA 配置"""
-        self.app.network_manager.set_ota_config()
+        """设置 OTA 配置 - 从 UI 获取参数"""
+        url1 = self.app.ui_manager.get_entry_value('url1')
+        url2 = self.app.ui_manager.get_entry_value('url2')
+        url3 = self.app.ui_manager.get_entry_value('url3')
+        url4 = self.app.ui_manager.get_entry_value('url4')
+        
+        self.app.network_manager.set_ota_config(url1, url2, url3, url4)
     
     def read_ota_config(self):
         """读取 OTA 配置"""
         self.app.network_manager.read_ota_config()
     
     def set_alarm_threshold(self):
-        """设置报警阈值"""
-        self.app.network_manager.set_alarm_threshold()
+        """设置报警阈值 - 从 UI 获取参数"""
+        # TODO: 添加报警阈值输入框到 UI
+        self.app.log_message("Alarm threshold configuration not yet implemented in UI")
     
     def set_aliyun_mqtt_config(self):
-        """设置阿里云 MQTT"""
-        self.app.network_manager.set_aliyun_mqtt_config()
+        """设置阿里云 MQTT - 从 UI 获取参数"""
+        product_key = self.app.ui_manager.get_entry_value('aliyun_product_key')
+        device_name = self.app.ui_manager.get_entry_value('aliyun_device_name')
+        device_secret = self.app.ui_manager.get_entry_value('aliyun_device_secret')
+        
+        if not all([product_key, device_name, device_secret]):
+            self.app.log_message("Error: Aliyun MQTT requires ProductKey, DeviceName, and DeviceSecret!")
+            return
+        
+        self.app.network_manager.set_aliyun_mqtt_config(product_key, device_name, device_secret)
     
     def set_mqtt_local_mode(self):
         """设置 MQTT 本地模式"""
-        self.app.network_manager.set_mqtt_local_mode()
+        self.app.network_manager.set_mqtt_mode(1)
     
     def set_mqtt_aliyun_mode(self):
         """设置 MQTT 阿里云模式"""
-        self.app.network_manager.set_mqtt_aliyun_mode()
+        self.app.network_manager.set_mqtt_mode(10)
     
     def set_position_config(self):
-        """设置位置配置"""
-        self.app.network_manager.set_position_config()
+        """设置位置配置 - 从 UI 获取参数"""
+        region = self.app.ui_manager.get_entry_value('position_region')
+        building = self.app.ui_manager.get_entry_value('position_building')
+        user_attr = self.app.ui_manager.get_entry_value('position_user_attr')
+        device_name = self.app.ui_manager.get_entry_value('position_device_name')
+        
+        self.app.network_manager.set_position_config(region, building, user_attr, device_name)
+    
+    def set_install_mode(self):
+        """设置安装模式 - 从 UI 获取参数"""
+        mode_str = self.app.ui_manager.get_entry_value('install_mode')
+        
+        # 从字符串中提取数字（如 "0 - Default" -> 0）
+        try:
+            mode = int(mode_str.split('-')[0].strip())
+            self.app.network_manager.set_install_mode(mode)
+        except (ValueError, AttributeError):
+            self.app.log_message(f"Error: Invalid install mode value: {mode_str}")
 
 
 class SystemCallbacks(CallbackGroup):
@@ -453,7 +500,7 @@ class SystemCallbacks(CallbackGroup):
     
     CALLBACK_NAMES = [
         'restart_sensor', 'save_config', 'reset_ui_with_confirmation',
-        'set_install_mode', 'save_sensor_config', 'restore_default_config',
+        'save_sensor_config', 'restore_default_config',
         'deactivate_sensor', 'set_kalman_filter', 'set_filter_on', 'set_filter_off',
         'set_gyro_levels', 'set_accel_levels', 'set_voltage_scales',
         'set_temp_offset', 'set_mag_offsets', 'start_cpu_monitor',
@@ -466,7 +513,6 @@ class SystemCallbacks(CallbackGroup):
             'restart_sensor': self.restart_sensor,
             'save_config': self.save_config,
             'reset_ui_with_confirmation': self.reset_ui_with_confirmation,
-            'set_install_mode': self.set_install_mode,
             'save_sensor_config': self.save_sensor_config,
             'restore_default_config': self.restore_default_config,
             'deactivate_sensor': self.deactivate_sensor,
@@ -499,10 +545,6 @@ class SystemCallbacks(CallbackGroup):
         """带确认的重置 UI"""
         self.app.reset_ui_with_confirmation()
     
-    def set_install_mode(self):
-        """设置安装模式"""
-        self.app.network_manager.set_install_mode()
-    
     def save_sensor_config(self):
         """保存传感器配置"""
         self.app.network_manager.save_sensor_config()
@@ -516,8 +558,17 @@ class SystemCallbacks(CallbackGroup):
         self.app.network_manager.deactivate_sensor()
     
     def set_kalman_filter(self):
-        """设置卡尔曼滤波"""
-        self.app.network_manager.set_kalman_filter()
+        """设置卡尔曼滤波 - 从 UI 获取 Q/R 值"""
+        try:
+            q_var = self.app.ui_manager.vars.get('kf_q')
+            r_var = self.app.ui_manager.vars.get('kf_r')
+            
+            q = float(q_var.get() if q_var else '0.005')
+            r = float(r_var.get() if r_var else '15')
+            
+            self.app.network_manager.set_kalman_filter(q, r)
+        except ValueError as e:
+            self.app.log_message(f"Error: Invalid Kalman filter parameters: {e}")
     
     def set_filter_on(self):
         """开启滤波"""
@@ -528,24 +579,76 @@ class SystemCallbacks(CallbackGroup):
         self.app.network_manager.set_filter_off()
     
     def set_gyro_levels(self):
-        """设置陀螺仪量程"""
-        self.app.network_manager.set_gyro_levels()
+        """设置陀螺仪报警等级 - 从 UI 获取5个等级值"""
+        try:
+            levels = []
+            for i in range(1, 6):
+                var = self.app.ui_manager.vars.get(f'gyro_level{i}')
+                if var:
+                    val = float(var.get())
+                    levels.append(val)
+            
+            if len(levels) == 5:
+                self.app.network_manager.set_gyro_levels(*levels)
+            else:
+                self.app.log_message("Error: Could not read all gyro level values")
+        except ValueError as e:
+            self.app.log_message(f"Error: Invalid gyro level parameters: {e}")
     
     def set_accel_levels(self):
-        """设置加速度计量程"""
-        self.app.network_manager.set_accel_levels()
+        """设置加速度报警等级 - 从 UI 获取5个等级值"""
+        try:
+            levels = []
+            for i in range(1, 6):
+                var = self.app.ui_manager.vars.get(f'accel_level{i}')
+                if var:
+                    val = float(var.get())
+                    levels.append(val)
+            
+            if len(levels) == 5:
+                self.app.network_manager.set_accel_levels(*levels)
+            else:
+                self.app.log_message("Error: Could not read all accel level values")
+        except ValueError as e:
+            self.app.log_message(f"Error: Invalid accel level parameters: {e}")
     
     def set_voltage_scales(self):
-        """设置电压量程"""
-        self.app.network_manager.set_voltage_scales()
+        """设置电压量程 - 从 UI 获取两个电压比例"""
+        try:
+            v1_var = self.app.ui_manager.vars.get('vks_v1')
+            v2_var = self.app.ui_manager.vars.get('vks_v2')
+            
+            scale1 = float(v1_var.get() if v1_var else '1.0')
+            scale2 = float(v2_var.get() if v2_var else '1.0')
+            
+            self.app.network_manager.set_voltage_scales(scale1, scale2)
+        except ValueError as e:
+            self.app.log_message(f"Error: Invalid voltage scale parameters: {e}")
     
     def set_temp_offset(self):
-        """设置温度偏移"""
-        self.app.network_manager.set_temp_offset()
+        """设置温度偏移 - 从 UI 获取偏移值"""
+        try:
+            tme_var = self.app.ui_manager.vars.get('tme_offset')
+            offset = float(tme_var.get() if tme_var else '0.0')
+            
+            self.app.network_manager.set_temp_offset(offset)
+        except ValueError as e:
+            self.app.log_message(f"Error: Invalid temperature offset: {e}")
     
     def set_mag_offsets(self):
-        """设置磁力计偏移"""
-        self.app.network_manager.set_mag_offsets()
+        """设置磁力计偏移 - 从 UI 获取 XYZ 值"""
+        try:
+            x_var = self.app.ui_manager.vars.get('magof_x')
+            y_var = self.app.ui_manager.vars.get('magof_y')
+            z_var = self.app.ui_manager.vars.get('magof_z')
+            
+            x = float(x_var.get() if x_var else '0.0')
+            y = float(y_var.get() if y_var else '0.0')
+            z = float(z_var.get() if z_var else '0.0')
+            
+            self.app.network_manager.set_mag_offsets(x, y, z)
+        except ValueError as e:
+            self.app.log_message(f"Error: Invalid magnetometer offset parameters: {e}")
     
     def start_cpu_monitor(self):
         """启动 CPU 监控"""

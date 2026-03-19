@@ -23,6 +23,7 @@ from ..chart_manager import ChartManager
 from ..ui_manager import UIManager
 from ..ring_buffer import QueueAdapter, RingBuffer
 from ..log_throttler import LogThrottler
+from ..camera import CameraController, StreamManager
 from .callbacks import AppCallbacks
 
 
@@ -145,6 +146,8 @@ class SensorCalibratorApp:
         self.network_manager = None
         self.calibration_workflow = None
         self.activation_workflow = None
+        self.camera_manager = None
+        self.stream_manager = None
         
         # 回调函数字典
         self.ui_callbacks = None
@@ -283,6 +286,9 @@ class SensorCalibratorApp:
 
         # 初始化激活工作流
         self._init_activation_workflow()
+
+        # 初始化相机管理器
+        self._init_camera_manager()
 
     def _setup_ui_manager(self):
         """设置UI管理器"""
@@ -493,6 +499,22 @@ class SensorCalibratorApp:
             'send_line': lambda cmd: self.serial_manager.send_line(cmd),
         }
         self.activation_workflow = ActivationWorkflow(callbacks)
+
+    def _init_camera_manager(self):
+        """初始化相机管理器和流管理器"""
+        # 创建相机控制器
+        self.camera_manager = CameraController(
+            self.serial_manager,
+            log_callback=self.log_message
+        )
+        
+        # 创建流管理器
+        self.stream_manager = StreamManager(
+            self.serial_manager,
+            log_callback=self.log_message
+        )
+        
+        self.log_message("Camera manager initialized")
 
     def refresh_ports(self):
         """刷新可用串口列表"""

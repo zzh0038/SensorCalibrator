@@ -882,3 +882,206 @@ class NetworkManager:
                 
         except Exception as e:
             self._log_message(f"Error in command sequence: {str(e)}")
+
+    # ==================== System 控制命令 (SS:11-SS:27) ====================
+
+    def _send_simple_command(self, command: str, description: str) -> bool:
+        """
+        发送简单命令（无参数）
+        
+        Args:
+            command: 命令字符串
+            description: 命令描述
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        if not self.serial_manager.is_connected:
+            self._log_message("Error: Not connected to serial port!")
+            return False
+        
+        try:
+            success, error = self.serial_manager.send_line(command)
+            if success:
+                self._log_message(f"Sent: {command} ({description})")
+                return True
+            else:
+                self._log_message(f"Error sending {command}: {error}")
+                return False
+        except Exception as e:
+            self._log_message(f"Error sending command: {e}")
+            return False
+
+    def save_sensor_config(self) -> bool:
+        """保存传感器配置 (SS:12)"""
+        return self._send_simple_command("SS:12", "Save Sensor Config")
+
+    def restore_default_config(self) -> bool:
+        """恢复默认配置 (SS:11)"""
+        return self._send_simple_command("SS:11", "Restore Default")
+
+    def deactivate_sensor(self) -> bool:
+        """停用传感器 (SS:27)"""
+        return self._send_simple_command("SS:27", "Deactivate Sensor")
+
+    def set_local_coordinate_mode(self) -> bool:
+        """设置局部坐标模式 (SS:2)"""
+        return self._send_simple_command("SS:2", "Local Coordinate Mode")
+
+    def set_global_coordinate_mode(self) -> bool:
+        """设置全局坐标模式 (SS:3)"""
+        return self._send_simple_command("SS:3", "Global Coordinate Mode")
+
+    def start_cpu_monitor(self) -> bool:
+        """启动 CPU 监控 (SS:5)"""
+        return self._send_simple_command("SS:5", "CPU Monitor")
+
+    def start_sensor_calibration(self) -> bool:
+        """启动传感器校准 (SS:6)"""
+        return self._send_simple_command("SS:6", "Sensor Calibration")
+
+    def trigger_buzzer(self) -> bool:
+        """触发蜂鸣器 (SS:14)"""
+        return self._send_simple_command("SS:14", "Buzzer")
+
+    def check_upgrade(self) -> bool:
+        """检查升级 (SS:15)"""
+        return self._send_simple_command("SS:15", "Check Upgrade")
+
+    def enter_ap_mode(self) -> bool:
+        """进入 AP 模式 (SS:16)"""
+        return self._send_simple_command("SS:16", "AP Mode")
+
+    # ==================== Sensors 配置命令 ====================
+
+    def set_kalman_filter(self, q: float, r: float) -> bool:
+        """
+        设置卡尔曼滤波系数 (SET:KFQR)
+        
+        Args:
+            q: 过程噪声 (Q)，范围 0.001-1.0
+            r: 测量噪声 (R)，范围 1.0-100.0
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        from sensor_calibrator.sensors.filter import build_kfqr_command
+        
+        valid, error, cmd = build_kfqr_command(q, r)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        return self._send_simple_command(cmd, "Kalman Filter")
+
+    def set_filter_on(self) -> bool:
+        """开启滤波 (SS:17,1)"""
+        from sensor_calibrator.sensors.filter import build_ss17_toggle_filter
+        cmd = build_ss17_toggle_filter(True)
+        return self._send_simple_command(cmd, "Filter ON")
+
+    def set_filter_off(self) -> bool:
+        """关闭滤波 (SS:17,0)"""
+        from sensor_calibrator.sensors.filter import build_ss17_toggle_filter
+        cmd = build_ss17_toggle_filter(False)
+        return self._send_simple_command(cmd, "Filter OFF")
+
+    def set_gyro_levels(self, level1: float, level2: float, level3: float,
+                        level4: float, level5: float) -> bool:
+        """
+        设置角度报警等级 (SET:GROLEVEL)
+        
+        Args:
+            level1-level5: 5个等级阈值（递增）
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        from sensor_calibrator.sensors.level_config import build_grolevel_command
+        
+        valid, error, cmd = build_grolevel_command(level1, level2, level3, level4, level5)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        return self._send_simple_command(cmd, "Gyro Levels")
+
+    def set_accel_levels(self, level1: float, level2: float, level3: float,
+                         level4: float, level5: float) -> bool:
+        """
+        设置加速度报警等级 (SET:ACCLEVEL)
+        
+        Args:
+            level1-level5: 5个等级阈值（递增）
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        from sensor_calibrator.sensors.level_config import build_acclevel_command
+        
+        valid, error, cmd = build_acclevel_command(level1, level2, level3, level4, level5)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        return self._send_simple_command(cmd, "Accel Levels")
+
+    def set_voltage_scales(self, scale1: float, scale2: float) -> bool:
+        """
+        设置电压传感器比例 (SET:VKS)
+        
+        Args:
+            scale1: 电压1比例系数
+            scale2: 电压2比例系数
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        from sensor_calibrator.sensors.auxiliary import build_vks_command
+        
+        valid, error, cmd = build_vks_command(scale1, scale2)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        return self._send_simple_command(cmd, "Voltage Scales")
+
+    def set_temp_offset(self, offset: float) -> bool:
+        """
+        设置温度传感器偏移 (SET:TME)
+        
+        Args:
+            offset: 温度偏移值 (°C)
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        from sensor_calibrator.sensors.auxiliary import build_tme_command
+        
+        valid, error, cmd = build_tme_command(offset)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        return self._send_simple_command(cmd, "Temperature Offset")
+
+    def set_mag_offsets(self, x: float, y: float, z: float) -> bool:
+        """
+        设置磁力传感器零偏 (SET:MAGOF)
+        
+        Args:
+            x: X轴零偏
+            y: Y轴零偏
+            z: Z轴零偏
+            
+        Returns:
+            bool: 是否发送成功
+        """
+        from sensor_calibrator.sensors.auxiliary import build_magof_command
+        
+        valid, error, cmd = build_magof_command(x, y, z)
+        if not valid:
+            self._log_message(f"Error: {error}")
+            return False
+        
+        return self._send_simple_command(cmd, "Mag Offsets")
