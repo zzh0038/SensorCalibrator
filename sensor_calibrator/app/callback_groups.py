@@ -252,22 +252,86 @@ class CalibrationCallbacks(CallbackGroup):
         thread.start()
     
     def send_commands_thread(self, commands):
-        """在后台线程发送命令"""
-        self.app.log_message(f"[DEBUG] Thread started, sending {len(commands)} commands...")
-        for i, cmd in enumerate(commands):
+        """在后台线程发送命令 - 采用旧版本完整逻辑"""
+        ser = self.app.serial_manager
+        
+        # 1. 停止数据流（关键！）
+        original_reading_state = self.app.is_reading
+        if original_reading_state:
+            self.app.log_message("[DEBUG] Stopping data stream for calibration commands...")
+            self.app.stop_data_stream_safe()
+            time.sleep(1.0)
+        
+        # 2. 清空输入缓冲区
+        if ser._ser and ser._ser.is_open:
             try:
+                ser._ser.reset_input_buffer()
+                time.sleep(0.5)
+            except Exception as e:
+                self.app.log_message(f"[DEBUG] Warning: Could not reset input buffer: {e}")
+        
+        try:
+            for i, cmd in enumerate(commands):
+                if not cmd.strip():  # 跳过空行
+                    continue
+                    
                 self.app.log_message(f"[DEBUG] Sending command {i+1}/{len(commands)}: {cmd}")
-                # 使用 serial_manager 的 send_line 方法（线程安全）
-                success, error = self.app.serial_manager.send_line(cmd)
+                
+                # 3. 发送命令（线程安全）
+                success, error = ser.send_line(cmd)
                 if not success:
                     self.app.log_message(f"Error sending command '{cmd}': {error}")
                     return
-                self.app.log_message(f"[DEBUG] Command {i+1} sent successfully")
-                time.sleep(0.2)  # 增加延迟确保设备处理完成
-            except Exception as e:
-                self.app.log_message(f"Error sending command: {e}")
-                return
-        self.app.log_message(f"Sent {len(commands)} calibration commands to device")
+                
+                # 4. 等待并读取响应（关键！）
+                time.sleep(2.0)  # 给设备足够处理时间
+                
+                # 持续读取响应
+                response_bytes = b""
+                start_time = time.time()
+                timeout = 5.0
+                
+                try:
+                    while time.time() - start_time < timeout:
+                        if ser._ser and ser._ser.in_waiting > 0:
+                            response_bytes += ser._ser.read(ser._ser.in_waiting)
+                        
+                        if response_bytes:
+                            response_str = response_bytes.decode("utf-8", errors="ignore")
+                            
+                            # 检查成功标识
+                            if "success" in response_str.lower() or "ok" in response_str.lower():
+                                self.app.log_message(f"✓ Command {i+1} successful")
+                                break
+                            elif "error" in response_str.lower() or "fail" in response_str.lower():
+                                self.app.log_message(f"✗ Command {i+1} failed: {response_str}")
+                                break
+                        
+                        time.sleep(0.1)
+                    
+                    # 显示响应
+                    if response_bytes:
+                        response_str = response_bytes.decode("utf-8", errors="ignore").strip()
+                        if response_str:
+                            self.app.log_message(f"Response: {response_str}")
+                    else:
+                        self.app.log_message(f"[DEBUG] No response for command {i+1}")
+                        
+                except Exception as e:
+                    self.app.log_message(f"[DEBUG] Error reading response: {e}")
+            
+            self.app.log_message("All calibration commands sent successfully!")
+            
+            # 启用重新发送按钮
+            if self.app.resend_btn:
+                self.app.resend_btn.config(state="normal")
+            
+        finally:
+            # 5. 恢复数据流
+            if original_reading_state and not self.app.is_reading:
+                self.app.log_message("[DEBUG] Restoring data stream...")
+                time.sleep(1.0)
+                self.app.start_data_stream()
     
     def resend_all_commands(self):
         """重新发送所有命令"""
@@ -347,8 +411,10 @@ class CalibrationCallbacks(CallbackGroup):
                 "adxl_accel_offset": np.array(params["adxl_accel_offset"]),
                 "mpu_gyro_offset": np.array(params["mpu_gyro_offset"]),
             }
-            with self.app.calibration_workflow._state_lock:
-                self.app.calibration_workflow._calibration_params = params_converted
+            success = self.app.calibration_workflow.set_calibration_params(params_converted)
+            if not success:
+                self.app.log_message("Failed to load calibration parameters")
+                return
             
             # 同步更新应用的 calibration_params
             self.app.calibration_params = params

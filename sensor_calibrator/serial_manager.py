@@ -220,13 +220,18 @@ class SerialManager:
         """停止串口数据读取"""
         if not self._is_reading:
             return
-        
+
         self._is_reading = False
-        
-        # 等待线程结束
+
+        # 等待线程结束（增加超时时间）
         if self._serial_thread and self._serial_thread.is_alive():
-            self._serial_thread.join(timeout=1.0)
-        
+            self._serial_thread.join(timeout=3.0)
+            if self._serial_thread.is_alive():
+                self._log_message(
+                    "Warning: Serial thread did not stop gracefully within timeout",
+                    "WARNING"
+                )
+
         self._log_message("Serial data reading stopped")
     
     def toggle_reading(self) -> bool:

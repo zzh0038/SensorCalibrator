@@ -36,36 +36,36 @@ class CalibrationVisualizer2D:
             'tip': '左侧朝下'
         },
         {
-            'name': '+Y', 
-            'down_axis': 'Y+', 
-            'view': 'front', 
+            'name': '+Y',
+            'down_axis': 'Y+',
+            'view': 'front',
             'gravity_dir': 'down',
-            'description': '前面朝下 (Y+)',
-            'tip': '前面朝下'
+            'description': '底面朝下 (Y+)',
+            'tip': '底面朝下'
         },
         {
-            'name': '-Y', 
-            'down_axis': 'Y-', 
-            'view': 'front', 
+            'name': '-Y',
+            'down_axis': 'Y-',
+            'view': 'front',
             'gravity_dir': 'up',
-            'description': '后面朝下 (Y-)',
-            'tip': '后面朝下'
-        },
-        {
-            'name': '+Z', 
-            'down_axis': 'Z+', 
-            'view': 'top', 
-            'gravity_dir': 'out',
-            'description': '顶面朝下 (Z+)',
+            'description': '顶面朝下 (Y-)',
             'tip': '顶面朝下'
         },
         {
-            'name': '-Z', 
-            'down_axis': 'Z-', 
-            'view': 'top', 
-            'gravity_dir': 'in',
-            'description': '底面朝下 (Z-)',
-            'tip': '底面朝下'
+            'name': '+Z',
+            'down_axis': 'Z+',
+            'view': 'front',
+            'gravity_dir': 'down',
+            'description': '前面朝下 (Z+)',
+            'tip': '前面朝下'
+        },
+        {
+            'name': '-Z',
+            'down_axis': 'Z-',
+            'view': 'front',
+            'gravity_dir': 'up',
+            'description': '后面朝下 (Z-)',
+            'tip': '后面朝下'
         },
     ]
     
@@ -327,13 +327,15 @@ class CalibrationVisualizer2D:
             font=('Segoe UI', 10)
         )
         
-        # 重力箭头
-        if pos['down_axis'] == 'Y+':
-            # Y+ 朝下：箭头向下
-            self._draw_arrow(cx + rect_size + 30, cy, 20, 0, self.COLORS['gravity'], "↓ 重力")
+        # 重力箭头 - 支持Y轴和Z轴朝下
+        if pos['down_axis'] in ('Y+', 'Z+'):
+            # Y+ 或 Z+ 朝下：箭头向下
+            axis_label = "Y+" if pos['down_axis'] == 'Y+' else "Z+"
+            self._draw_arrow(cx + rect_size + 30, cy, 20, 0, self.COLORS['gravity'], f"↓ {axis_label}")
         else:
-            # Y- 朝下：箭头向上
-            self._draw_arrow(cx + rect_size + 30, cy, -20, 0, self.COLORS['gravity'], "重力 ↑", flip=True)
+            # Y- 或 Z- 朝下：箭头向上
+            axis_label = "Y-" if pos['down_axis'] == 'Y-' else "Z-"
+            self._draw_arrow(cx + rect_size + 30, cy, -20, 0, self.COLORS['gravity'], f"{axis_label} ↑", flip=True)
             
     def _draw_arrow(self, x, y, dx, dy, color, text, flip=False):
         """

@@ -106,6 +106,35 @@ class CalibrationWorkflow:
         with self._state_lock:
             return self._calibration_params.copy() if self._calibration_params else None
 
+    def set_calibration_params(self, params: dict) -> bool:
+        """
+        线程安全地设置校准参数
+
+        Args:
+            params: 校准参数字典，包含 numpy 数组
+
+        Returns:
+            bool: 是否设置成功
+        """
+        try:
+            # 深拷贝 numpy 数组，避免外部修改影响内部状态
+            import copy
+
+            params_copy = {
+                k: (v.copy() if hasattr(v, 'copy') else v)
+                for k, v in params.items()
+            }
+
+            with self._state_lock:
+                self._calibration_params = params_copy
+
+            self._log_message("Calibration parameters loaded successfully")
+            return True
+
+        except Exception as e:
+            self._log_message(f"Error setting calibration parameters: {e}", "ERROR")
+            return False
+
     @property
     def position_progress(self) -> str:
         """获取位置进度字符串（线程安全）"""
@@ -573,8 +602,10 @@ class CalibrationWorkflow:
         with self._state_lock:
             if not self._calibration_params:
                 return []
-            # 复制参数到局部变量，避免在锁外访问共享数据
-            params = self._calibration_params.copy()
+            # 深拷贝参数到局部变量，避免在锁外访问共享数据
+            import copy
+
+            params = copy.deepcopy(self._calibration_params)
 
         commands = []
 

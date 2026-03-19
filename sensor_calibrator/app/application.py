@@ -602,7 +602,13 @@ class SensorCalibratorApp:
             k: (v.tolist() if isinstance(v, np.ndarray) else v)
             for k, v in params.items()
         }
-        
+
+        # 更新UI显示为完成状态（第6个位置完成后未触发on_position_captured）
+        if self.ui_manager:
+            self.ui_manager.vars['cal_progress'].set("6/6")
+            self.ui_manager.vars['cal_position_desc'].set("所有位置采集完成")
+            self.ui_manager.vars['cal_position_tip'].set("校准参数计算完成，请发送命令到设备")
+
         if self.calibrate_btn:
             self.calibrate_btn.config(state="normal")
         if self.capture_btn:
@@ -1118,6 +1124,23 @@ class SensorCalibratorApp:
         """清空所有数据"""
         self.data_processor.clear_all()
 
+    def _clear_data_queue(self):
+        """清空数据队列中的残留数据 - 安全版本"""
+        if self.data_queue:
+            try:
+                cleared = 0
+                # 使用 try-except 避免 empty() 方法不存在的问题
+                while True:
+                    try:
+                        self.data_queue.get_nowait()
+                        cleared += 1
+                    except:
+                        break
+                if cleared > 0:
+                    self.log_message(f"Cleared {cleared} old packets from queue")
+            except Exception as e:
+                self.log_message(f"Queue clear warning: {e}")
+
     def _calculate_chart_stats(self, data_dict: dict) -> dict:
         """
         计算图表显示数据的统计信息
@@ -1490,28 +1513,35 @@ class SensorCalibratorApp:
         self.log_message("=" * 60)
 
     def start_data_stream(self):
-        """开始数据流"""
+        """开始数据流 - 优化版本（先启动读取线程，再发送命令）"""
         if not self.serial_manager.is_connected:
             self.log_message("Error: Not connected to serial port!")
             return
-            
+        
+        # 优化1：先启动读取线程（确保数据不会丢失）
+        if not self.serial_manager.start_reading():
+            self.log_message("Failed to start reading thread!")
+            return
+        
+        # 优化2：清空旧数据（避免残留数据干扰）
+        self._clear_data_queue()
+        self.clear_data()
+        self.data_processor.data_start_time = time.time()
+        self.data_processor.packet_count = 0
+        self.packets_received = 0
+        
+        # 优化3：最后发送启动命令
         if self.serial_manager.send_ss0_start_stream():
-            if self.serial_manager.start_reading():
-                self.is_reading = True
-                # 更新按钮文本
-                if self.data_btn:
-                    self.data_btn.config(text="Stop Data")
-                # 更新 Dashboard 数据流状态
-                if hasattr(self, 'stream_status_var') and self.stream_status_var:
-                    self.stream_status_var.set("Running")
-                self.log_message("Data stream started")
-                
-                self.clear_data()
-                self.data_processor.data_start_time = time.time()
-                self.data_processor.packet_count = 0
-                self.packets_received = 0
-                
-                self.schedule_update_gui()
+            self.is_reading = True
+            # 更新按钮文本
+            if self.data_btn:
+                self.data_btn.config(text="Stop Data")
+            # 更新 Dashboard 数据流状态
+            if hasattr(self, 'stream_status_var') and self.stream_status_var:
+                self.stream_status_var.set("Running")
+            self.log_message("Data stream starting...")
+            
+            self.schedule_update_gui()
 
     def stop_data_stream(self):
         """停止数据流"""
