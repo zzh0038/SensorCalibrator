@@ -211,10 +211,15 @@ class CalibrationCallbacks(CallbackGroup):
     
     def send_all_commands(self):
         """发送所有命令到设备"""
-        self.app.log_message("[DEBUG] Send button clicked, generating commands...")
+        self.app.log_message("[DEBUG] Send button clicked, preparing commands...")
         
-        commands = self.app.calibration_workflow.generate_calibration_commands()
-        self.app.log_message(f"[DEBUG] Generated {len(commands)} commands")
+        # 优先使用保存的命令列表（确保与显示一致）
+        if hasattr(self.app, '_current_calibration_commands') and self.app._current_calibration_commands:
+            commands = self.app._current_calibration_commands
+            self.app.log_message(f"[DEBUG] Using saved commands: {len(commands)} commands")
+        else:
+            commands = self.app.calibration_workflow.generate_calibration_commands()
+            self.app.log_message(f"[DEBUG] Generated new commands: {len(commands)} commands")
         
         if not commands:
             self.app.log_message("Error: No commands to send. Please complete calibration first.")
@@ -227,6 +232,16 @@ class CalibrationCallbacks(CallbackGroup):
         if not self.app.serial_manager.is_connected:
             self.app.log_message("Error: Not connected to device")
             return
+        
+        # 验证命令与显示一致
+        if self.app.cmd_text:
+            displayed_text = self.app.cmd_text.get(1.0, "end").strip()
+            if displayed_text:
+                displayed_commands = [line.strip() for line in displayed_text.split('\n') if line.strip()]
+                if displayed_commands != commands:
+                    self.app.log_message("[WARNING] Displayed commands differ from send commands!")
+                    self.app.log_message(f"[DEBUG] Displayed: {displayed_commands}")
+                    self.app.log_message(f"[DEBUG] To send: {commands}")
         
         self.app.log_message(f"[DEBUG] Starting thread to send {len(commands)} commands...")
         thread = threading.Thread(
@@ -322,8 +337,21 @@ class CalibrationCallbacks(CallbackGroup):
                 self.app.log_message("Error: Invalid calibration file format")
                 return
             
-            # 设置到校准工作流
-            self.app.calibration_workflow._calibration_params = params
+            # 设置到校准工作流（使用线程安全的方法）
+            import numpy as np
+            # 将列表转换为 numpy 数组以保持数据类型一致
+            params_converted = {
+                "mpu_accel_scale": np.array(params["mpu_accel_scale"]),
+                "mpu_accel_offset": np.array(params["mpu_accel_offset"]),
+                "adxl_accel_scale": np.array(params["adxl_accel_scale"]),
+                "adxl_accel_offset": np.array(params["adxl_accel_offset"]),
+                "mpu_gyro_offset": np.array(params["mpu_gyro_offset"]),
+            }
+            with self.app.calibration_workflow._state_lock:
+                self.app.calibration_workflow._calibration_params = params_converted
+            
+            # 同步更新应用的 calibration_params
+            self.app.calibration_params = params
             
             # 显示在命令文本框中
             self.generate_calibration_commands()

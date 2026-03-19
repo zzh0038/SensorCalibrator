@@ -596,7 +596,13 @@ class SensorCalibratorApp:
 
     def _on_calibration_finished(self, params: dict):
         """校准完成回调"""
-        self.calibration_params = params
+        # 将 numpy 数组转换为列表存储（便于 JSON 序列化）
+        import numpy as np
+        self.calibration_params = {
+            k: (v.tolist() if isinstance(v, np.ndarray) else v)
+            for k, v in params.items()
+        }
+        
         if self.calibrate_btn:
             self.calibrate_btn.config(state="normal")
         if self.capture_btn:
@@ -608,6 +614,10 @@ class SensorCalibratorApp:
         
         # 生成校准命令并显示在命令文本框中
         commands = self.calibration_workflow.generate_calibration_commands()
+        
+        # 保存当前命令到应用实例，确保显示和发送一致
+        self._current_calibration_commands = commands
+        
         if self.cmd_text:
             self.cmd_text.delete(1.0, "end")
             for cmd in commands:
@@ -620,7 +630,9 @@ class SensorCalibratorApp:
             self.save_btn.config(state="normal")
         
         self.log_message("Calibration finished successfully!")
-        self.log_message("Calibration commands generated. Click 'Send Commands' to upload to device.")
+        self.log_message(f"Calibration commands generated: {len(commands)} commands")
+        for i, cmd in enumerate(commands, 1):
+            self.log_message(f"  {i}. {cmd}")
 
     def _on_calibration_error(self):
         """校准错误回调"""
