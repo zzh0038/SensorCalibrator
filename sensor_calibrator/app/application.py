@@ -369,8 +369,8 @@ class SensorCalibratorApp:
         self.capture_btn = self.ui_manager.widgets.get('capture_btn')
         
         # 命令控件
-        self.send_btn = self.ui_manager.widgets.get('send_btn')
-        self.save_btn = self.ui_manager.widgets.get('save_btn')
+        self.send_btn = self.ui_manager.widgets.get('cal_send_all_commands_btn')
+        self.save_btn = self.ui_manager.widgets.get('cal_save_calibration_parameters_btn')
         self.read_props_btn = self.ui_manager.widgets.get('read_props_btn')
         self.read_device_btn = self.ui_manager.widgets.get('read_device_btn')
         self.resend_btn = self.ui_manager.widgets.get('resend_btn')
