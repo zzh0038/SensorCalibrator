@@ -570,14 +570,17 @@ class CalibrationWorkflow:
 
     def generate_calibration_commands(self) -> list:
         """生成校准命令列表"""
-        if not self._calibration_params:
-            return []
+        with self._state_lock:
+            if not self._calibration_params:
+                return []
+            # 复制参数到局部变量，避免在锁外访问共享数据
+            params = self._calibration_params.copy()
 
         commands = []
 
         # MPU6050加速度计校准 - 使用新格式指令
-        scale = self._calibration_params["mpu_accel_scale"]
-        offset = self._calibration_params["mpu_accel_offset"]
+        scale = params["mpu_accel_scale"]
+        offset = params["mpu_accel_offset"]
         commands.append(
             f"SET:RACKS,{scale[0]:.6f},{scale[1]:.6f},{scale[2]:.6f}"
         )
@@ -586,8 +589,8 @@ class CalibrationWorkflow:
         )
 
         # ADXL355加速度计校准 - 使用新格式指令
-        scale = self._calibration_params["adxl_accel_scale"]
-        offset = self._calibration_params["adxl_accel_offset"]
+        scale = params["adxl_accel_scale"]
+        offset = params["adxl_accel_offset"]
         commands.append(
             f"SET:REACKS,{scale[0]:.6f},{scale[1]:.6f},{scale[2]:.6f}"
         )
@@ -596,7 +599,7 @@ class CalibrationWorkflow:
         )
 
         # 陀螺仪校准 - 使用新格式指令
-        gyro = self._calibration_params["mpu_gyro_offset"]
+        gyro = params["mpu_gyro_offset"]
         commands.append(f"SET:VROOF,{gyro[0]:.6f},{gyro[1]:.6f},{gyro[2]:.6f}")
 
         return commands

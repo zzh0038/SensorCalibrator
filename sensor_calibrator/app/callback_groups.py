@@ -211,15 +211,24 @@ class CalibrationCallbacks(CallbackGroup):
     
     def send_all_commands(self):
         """发送所有命令到设备"""
+        self.app.log_message("[DEBUG] Send button clicked, generating commands...")
+        
         commands = self.app.calibration_workflow.generate_calibration_commands()
+        self.app.log_message(f"[DEBUG] Generated {len(commands)} commands")
+        
         if not commands:
             self.app.log_message("Error: No commands to send. Please complete calibration first.")
             return
         
-        if not self.app.serial_manager or not self.app.serial_manager.is_connected:
+        if not self.app.serial_manager:
+            self.app.log_message("Error: Serial manager not initialized")
+            return
+            
+        if not self.app.serial_manager.is_connected:
             self.app.log_message("Error: Not connected to device")
             return
         
+        self.app.log_message(f"[DEBUG] Starting thread to send {len(commands)} commands...")
         thread = threading.Thread(
             target=self.send_commands_thread,
             args=(commands,),
@@ -229,13 +238,16 @@ class CalibrationCallbacks(CallbackGroup):
     
     def send_commands_thread(self, commands):
         """在后台线程发送命令"""
-        for cmd in commands:
+        self.app.log_message(f"[DEBUG] Thread started, sending {len(commands)} commands...")
+        for i, cmd in enumerate(commands):
             try:
+                self.app.log_message(f"[DEBUG] Sending command {i+1}/{len(commands)}: {cmd}")
                 # 使用 serial_manager 的 send_line 方法（线程安全）
                 success, error = self.app.serial_manager.send_line(cmd)
                 if not success:
                     self.app.log_message(f"Error sending command '{cmd}': {error}")
                     return
+                self.app.log_message(f"[DEBUG] Command {i+1} sent successfully")
                 time.sleep(0.2)  # 增加延迟确保设备处理完成
             except Exception as e:
                 self.app.log_message(f"Error sending command: {e}")
