@@ -335,6 +335,15 @@ class CalibrationCallbacks(CallbackGroup):
             
             self.app.log_message("All calibration commands sent successfully!")
             
+            # ✅ 关键修复：发送 SS:7 保存配置到设备
+            self.app.log_message("[DEBUG] Saving configuration to device (SS:7)...")
+            success, error = ser.send_ss7_save_config()
+            if success:
+                self.app.log_message("✓ Configuration saved to device (SS:7)")
+            else:
+                self.app.log_message(f"✗ Failed to save configuration: {error}")
+            time.sleep(1.0)  # 等待保存完成
+            
             # 启用重新发送按钮
             if self.app.resend_btn:
                 self.app.resend_btn.config(state="normal")
