@@ -337,12 +337,27 @@ class CalibrationCallbacks(CallbackGroup):
             
             # ✅ 关键修复：发送 SS:7 保存配置到设备
             self.app.log_message("[DEBUG] Saving configuration to device (SS:7)...")
-            success, error = ser.send_ss7_save_config()
+            
+            # 使用 send_line 发送 SS:7 以便获取响应
+            success, error = ser.send_line("SS:7")
             if success:
-                self.app.log_message("✓ Configuration saved to device (SS:7)")
+                self.app.log_message("✓ SS:7 save command sent")
+                # 等待设备保存完成（可能需要更长时间）
+                time.sleep(2.0)
+                
+                # 尝试读取响应
+                try:
+                    if ser._ser and ser._ser.in_waiting > 0:
+                        response_bytes = ser._ser.read(ser._ser.in_waiting)
+                        response_str = response_bytes.decode("utf-8", errors="ignore").strip()
+                        if response_str:
+                            self.app.log_message(f"SS:7 Response: {response_str[:100]}")
+                except Exception as e:
+                    self.app.log_message(f"[DEBUG] Error reading SS:7 response: {e}")
             else:
-                self.app.log_message(f"✗ Failed to save configuration: {error}")
-            time.sleep(1.0)  # 等待保存完成
+                self.app.log_message(f"✗ Failed to send SS:7: {error}")
+            
+            time.sleep(1.0)  # 额外等待确保保存完成
             
             # 启用重新发送按钮
             if self.app.resend_btn:
