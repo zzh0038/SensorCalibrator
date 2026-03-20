@@ -49,12 +49,16 @@ class SerialCallbacks(CallbackGroup):
     
     def toggle_connection(self):
         """切换串口连接"""
+        self.app.log_message("[DEBUG] Toggle connection button clicked")
+        
         if not self.app.port_var or not self.app.baud_var:
             self.app.log_message("Error: Port variables not initialized!")
             return
         
         port = self.app.port_var.get()
         baudrate = int(self.app.baud_var.get())
+        
+        self.app.log_message(f"[DEBUG] Connection status: {self.app.serial_manager.is_connected}")
         
         if self.app.serial_manager.is_connected:
             self.disconnect_serial()
@@ -65,7 +69,7 @@ class SerialCallbacks(CallbackGroup):
         """连接串口"""
         if self.app.serial_manager.connect(port, baudrate):
             if self.app.connect_btn:
-                self.app.connect_btn.config(text="Disconnect")
+                self.app.connect_btn.config(text="Disconnect", state="normal")
             if self.app.data_btn:
                 self.app.data_btn.config(state="normal")
             self.app.ser = self.app.serial_manager.serial_port
@@ -195,11 +199,20 @@ class CalibrationCallbacks(CallbackGroup):
         self.app.calibration_workflow.finish_calibration()
     
     def generate_calibration_commands(self):
-        """生成校准命令并显示在命令文本框中"""
+        """
+        生成校准命令并显示在命令文本框中
+        
+        注意：此方法会同步更新 _current_calibration_commands 缓存，
+        确保 UI 显示与发送逻辑使用相同的命令。
+        """
         commands = self.app.calibration_workflow.generate_calibration_commands()
         if not commands:
             self.app.log_message("Error: No calibration parameters available. Please complete calibration first.")
             return
+        
+        # ✅ 修复：同步更新 _current_calibration_commands，确保显示与发送一致
+        self.app._current_calibration_commands = commands
+        self.app.log_message(f"[DEBUG] Commands cached: {len(commands)} commands")
         
         # 显示在命令文本框中
         if hasattr(self.app, 'cmd_text') and self.app.cmd_text:
@@ -210,16 +223,37 @@ class CalibrationCallbacks(CallbackGroup):
         self.app.log_message(f"Generated {len(commands)} calibration commands")
     
     def send_all_commands(self):
-        """发送所有命令到设备"""
+        """
+        发送所有命令到设备
+        
+        命令获取优先级：
+        1. 优先从 cmd_text 文本框读取（用户看到的是唯一真相源）
+        2. 回退到 _current_calibration_commands 缓存
+        3. 最后尝试重新生成
+        
+        这确保了即使缓存不同步，发送的也始终是用户看到的命令。
+        """
         self.app.log_message("[DEBUG] Send button clicked, preparing commands...")
         
-        # 优先使用保存的命令列表（确保与显示一致）
-        if hasattr(self.app, '_current_calibration_commands') and self.app._current_calibration_commands:
-            commands = self.app._current_calibration_commands
-            self.app.log_message(f"[DEBUG] Using saved commands: {len(commands)} commands")
-        else:
-            commands = self.app.calibration_workflow.generate_calibration_commands()
-            self.app.log_message(f"[DEBUG] Generated new commands: {len(commands)} commands")
+        # ✅ 修复：优先从文本框读取（用户看到的是唯一真相源）
+        commands = []
+        if self.app.cmd_text:
+            displayed_text = self.app.cmd_text.get(1.0, "end").strip()
+            if displayed_text:
+                commands = [line.strip() for line in displayed_text.split('\n') if line.strip()]
+                self.app.log_message(f"[DEBUG] Using displayed commands: {len(commands)} commands")
+            else:
+                self.app.log_message("[DEBUG] Command text box is empty")
+        
+        # 如果文本框为空，尝试使用缓存
+        if not commands:
+            if hasattr(self.app, '_current_calibration_commands') and self.app._current_calibration_commands:
+                commands = self.app._current_calibration_commands
+                self.app.log_message(f"[DEBUG] Using cached commands: {len(commands)} commands")
+            else:
+                # 最后尝试重新生成
+                commands = self.app.calibration_workflow.generate_calibration_commands()
+                self.app.log_message(f"[DEBUG] Generated new commands: {len(commands)} commands")
         
         if not commands:
             self.app.log_message("Error: No commands to send. Please complete calibration first.")
@@ -233,15 +267,12 @@ class CalibrationCallbacks(CallbackGroup):
             self.app.log_message("Error: Not connected to device")
             return
         
-        # 验证命令与显示一致
-        if self.app.cmd_text:
-            displayed_text = self.app.cmd_text.get(1.0, "end").strip()
-            if displayed_text:
-                displayed_commands = [line.strip() for line in displayed_text.split('\n') if line.strip()]
-                if displayed_commands != commands:
-                    self.app.log_message("[WARNING] Displayed commands differ from send commands!")
-                    self.app.log_message(f"[DEBUG] Displayed: {displayed_commands}")
-                    self.app.log_message(f"[DEBUG] To send: {commands}")
+        # ✅ 增强：验证命令与缓存一致性（帮助排查问题）
+        cached = getattr(self.app, '_current_calibration_commands', [])
+        if cached and cached != commands:
+            self.app.log_message("[WARNING] Displayed commands differ from cached commands!")
+            self.app.log_message(f"[DEBUG] Cached ({len(cached)}): {cached[:2]}...")
+            self.app.log_message(f"[DEBUG] Displayed ({len(commands)}): {commands[:2]}...")
         
         self.app.log_message(f"[DEBUG] Starting thread to send {len(commands)} commands...")
         thread = threading.Thread(
@@ -284,47 +315,33 @@ class CalibrationCallbacks(CallbackGroup):
                     return
                 
                 # 4. 等待并读取响应（关键！）
-                time.sleep(2.0)  # 给设备足够处理时间
+                time.sleep(0.5)  # 给设备处理时间
                 
-                # 持续读取响应
-                response_bytes = b""
-                start_time = time.time()
-                timeout = 5.0
-                
+                # 读取响应（简单方式：只读取一次）
                 try:
-                    while time.time() - start_time < timeout:
-                        if ser._ser and ser._ser.in_waiting > 0:
-                            response_bytes += ser._ser.read(ser._ser.in_waiting)
-                        
-                        if response_bytes:
-                            response_str = response_bytes.decode("utf-8", errors="ignore")
-                            
-                            # 检查成功标识
-                            if "success" in response_str.lower() or "ok" in response_str.lower():
-                                self.app.log_message(f"✓ Command {i+1} successful")
-                                break
-                            elif "error" in response_str.lower() or "fail" in response_str.lower():
-                                self.app.log_message(f"✗ Command {i+1} failed: {response_str}")
-                                break
-                        
-                        time.sleep(0.1)
-                    
-                    # 显示响应
-                    if response_bytes:
+                    if ser._ser and ser._ser.in_waiting > 0:
+                        response_bytes = ser._ser.read(ser._ser.in_waiting)
                         response_str = response_bytes.decode("utf-8", errors="ignore").strip()
-                        if response_str:
-                            self.app.log_message(f"Response: {response_str}")
-                    else:
-                        self.app.log_message(f"[DEBUG] No response for command {i+1}")
                         
+                        # 只显示前100字符，避免日志过长
+                        display_str = response_str[:100] + "..." if len(response_str) > 100 else response_str
+                        if display_str:
+                            self.app.log_message(f"Response: {display_str}")
                 except Exception as e:
                     self.app.log_message(f"[DEBUG] Error reading response: {e}")
+                
+                # 命令间延迟
+                time.sleep(0.5)
             
             self.app.log_message("All calibration commands sent successfully!")
             
             # 启用重新发送按钮
             if self.app.resend_btn:
                 self.app.resend_btn.config(state="normal")
+            
+            # ✅ 新增：询问是否读取传感器属性（在主线程中执行弹窗）
+            if hasattr(self.app, 'root') and self.app.root:
+                self.app.root.after(0, lambda: ActivationCallbacks.ask_read_properties(self))
             
         finally:
             # 5. 恢复数据流
@@ -378,7 +395,12 @@ class CalibrationCallbacks(CallbackGroup):
             self.app.log_message(f"Error saving calibration parameters: {e}")
     
     def load_calibration_parameters(self):
-        """加载校准参数从文件"""
+        """
+        加载校准参数从文件
+        
+        注意：加载后会直接生成并缓存命令，确保 _current_calibration_commands
+        与新加载的参数保持一致。
+        """
         from tkinter import filedialog
         import json
         
@@ -419,8 +441,18 @@ class CalibrationCallbacks(CallbackGroup):
             # 同步更新应用的 calibration_params
             self.app.calibration_params = params
             
-            # 显示在命令文本框中
-            self.generate_calibration_commands()
+            # ✅ 修复：直接生成并保存命令，确保一致性（不依赖有缺陷的 generate_calibration_commands）
+            commands = self.app.calibration_workflow.generate_calibration_commands()
+            if commands:
+                self.app._current_calibration_commands = commands
+                
+                # 显示在命令文本框中
+                if hasattr(self.app, 'cmd_text') and self.app.cmd_text:
+                    self.app.cmd_text.delete(1.0, "end")
+                    for cmd in commands:
+                        self.app.cmd_text.insert("end", cmd + "\n")
+                
+                self.app.log_message(f"Generated {len(commands)} calibration commands from loaded params")
             
             self.app.log_message(f"Calibration parameters loaded from: {filename}")
         except Exception as e:
@@ -456,8 +488,20 @@ class ActivationCallbacks(CallbackGroup):
         }
     
     def ask_read_properties(self):
-        """询问并读取传感器属性"""
-        self.app.read_sensor_properties()
+        """
+        询问是否读取传感器属性
+        
+        在校准命令发送完成后弹窗询问用户是否读取传感器属性来验证校准结果。
+        """
+        import tkinter.messagebox as messagebox
+        
+        response = messagebox.askyesno(
+            "Read Sensor Properties",
+            "All calibration commands have been sent successfully.\n\n"
+            "Do you want to read sensor properties now?",
+        )
+        if response:
+            self.app.read_sensor_properties()
     
     def read_sensor_properties(self):
         """读取传感器属性"""

@@ -162,6 +162,14 @@ class SensorCalibratorApp:
         self.ax3 = None
         self.ax4 = None
         self.fig = None
+        
+        # ✅ 校准命令缓存 - 必须与 cmd_text 显示保持一致
+        # 应该在以下场景更新：
+        # 1. 校准完成 (_on_calibration_finished)
+        # 2. 生成命令 (generate_calibration_commands)
+        # 3. 加载参数 (load_calibration_parameters)
+        # 4. UI 重置 (reset_ui_state)
+        self._current_calibration_commands: list = []
 
     def setup(self):
         """设置GUI和初始化所有组件"""
@@ -841,8 +849,10 @@ class SensorCalibratorApp:
         """安全停止数据流"""
         try:
             self.is_reading = False
-            if self.ser and self.ser.is_open:
-                self.send_ss4_stop_stream()
+            # 使用 serial_manager 停止数据流
+            if self.serial_manager and self.serial_manager.is_connected:
+                self.serial_manager.stop_reading()
+                self.serial_manager.send_ss4_stop_stream()
 
             if self.data_btn:
                 self.data_btn.config(text="Start Data Stream")
@@ -2930,6 +2940,11 @@ class SensorCalibratorApp:
         if self.cmd_text:
             self.cmd_text.delete(1.0, "end")
         
+        # ✅ 修复：清空命令缓存，防止发送过期命令
+        if hasattr(self, '_current_calibration_commands'):
+            self._current_calibration_commands = []
+            self.log_message("[DEBUG] Calibration commands cache cleared")
+        
         # 6. 重置激活状态
         self._reset_activation_display()
         
@@ -2950,12 +2965,12 @@ class SensorCalibratorApp:
         - Connect 按钮：根据实际连接状态设置
         - 其他按钮：重置为初始状态（禁用）
         """
-        # Connect 按钮：根据实际连接状态
+        # Connect 按钮：根据实际连接状态（确保状态为 normal）
         if self.connect_btn:
             if hasattr(self, 'serial_manager') and self.serial_manager.is_connected:
-                self.connect_btn.config(text="Disconnect")
+                self.connect_btn.config(text="Disconnect", state="normal")
             else:
-                self.connect_btn.config(text="Connect")
+                self.connect_btn.config(text="Connect", state="normal")
         
         # Data Stream 按钮
         if self.data_btn:
