@@ -537,7 +537,11 @@ class ActivationCallbacks(CallbackGroup):
     
     def activate_sensor(self):
         """激活传感器"""
-        self.app.activation_workflow.activate_sensor()
+        # 传入应用主类的 MAC 地址和生成的密钥
+        self.app.activation_workflow.activate_sensor(
+            mac_address=self.app.mac_address,
+            generated_key=self.app.generated_key
+        )
     
     def verify_activation(self):
         """验证激活"""

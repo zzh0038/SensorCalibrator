@@ -1983,21 +1983,37 @@ class SensorCalibratorApp:
                 self.root.after(0, self.start_data_stream)
 
     def _extract_mac_only(self):
-        """仅从传感器属性中提取MAC地址并生成密钥（不处理激活状态）"""
+        """从传感器属性中提取MAC地址和AKY，并更新激活状态"""
         self.log_message("DEBUG: _extract_mac_only called")
         
         if not self.sensor_properties:
             self.log_message("DEBUG: sensor_properties is empty")
             return
 
+        # 获取 sys_info（优先使用 "sys" 字段，否则使用根级别）
+        sys_info = None
         if "sys" in self.sensor_properties:
             sys_info = self.sensor_properties["sys"]
-            mac_keys = ["MAC", "mac", "mac_address", "macAddress", "device_mac"]
-            for key in mac_keys:
-                if key in sys_info:
-                    self.mac_address = sys_info[key]
-                    self.log_message(f"DEBUG: Found MAC address: {self.mac_address} (key: {key})")
-                    break
+        elif "params" in self.sensor_properties:
+            sys_info = self.sensor_properties["params"]
+        else:
+            sys_info = self.sensor_properties
+
+        # 提取 MAC 地址
+        mac_keys = ["MAC", "mac", "mac_address", "macAddress", "device_mac"]
+        for key in mac_keys:
+            if key in sys_info:
+                self.mac_address = sys_info[key]
+                self.log_message(f"DEBUG: Found MAC address: {self.mac_address} (key: {key})")
+                break
+
+        # 提取 AKY（如果存在）
+        aky_keys = ["AKY", "aky", "ak_key"]
+        for key in aky_keys:
+            if key in sys_info:
+                self._aky_from_ss13 = sys_info[key]
+                self.log_message(f"DEBUG: Found AKY from properties: '{self._aky_from_ss13}'")
+                break
 
         if self.mac_address:
             import hashlib
@@ -2022,6 +2038,9 @@ class SensorCalibratorApp:
                     self.log_message(f"DEBUG: Updated key_var with {key_display}")
                 else:
                     self.log_message(f"DEBUG: key_var is None or generated_key is empty")
+                
+                # 关键：提取完 MAC 和 AKY 后，立即尝试更新激活状态
+                self._try_update_activation_status()
             else:
                 self.log_message(f"DEBUG: MAC address format invalid: {cleaned_mac}")
         else:
