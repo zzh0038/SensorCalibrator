@@ -489,19 +489,19 @@ class ActivationCallbacks(CallbackGroup):
     
     def ask_read_properties(self):
         """
-        询问是否读取传感器属性
+        询问是否读取传感器校准参数
         
-        在校准命令发送完成后弹窗询问用户是否读取传感器属性来验证校准结果。
+        在校准命令发送完成后弹窗询问用户是否读取传感器校准参数（SS:13）来验证校准结果。
         """
         import tkinter.messagebox as messagebox
         
         response = messagebox.askyesno(
-            "Read Sensor Properties",
+            "Read Calibration Parameters",
             "All calibration commands have been sent successfully.\n\n"
-            "Do you want to read sensor properties now?",
+            "Do you want to read calibration parameters (SS:13) now?",
         )
         if response:
-            self.app.read_sensor_properties()
+            self.app.read_device_info()  # ✅ 使用 SS:13 读取校准参数
     
     def read_sensor_properties(self):
         """读取传感器属性"""
